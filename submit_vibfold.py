@@ -2,14 +2,16 @@
 # TODO: think of how to deal with multi-entry fastas in multimer
 # TODO: restrict templates when using multi sequences
 
-FASTA_FILE = 'fastas/VHH72_SARSCoV1.fasta' # location of fasta file between '' - absolute or relative path possible
-IS_COMPLEX = False                          # True or False
+FASTA_FILE = 'fastas/test.fasta' # location of fasta file between '' - absolute or relative path possible
+IS_COMPLEX = True                          # True or False
 MSA_MODE = 'alphafold_default'             # 'alphafold_default' or 'mmseqs2_server'
-SAVE_DIR = 'results/testing'               # location of results directory between '' - abs or rel path possible
+SAVE_DIR = 'results/test'               # location of results directory between '' - abs or rel path possible
 DO_RELAX = 'best'                          # 'all', 'best' or 'none'
 USE_TEMPLATES = True # True, False - TODO: only True is supported currently
 
-cluster = 'joltik' # TODO: find a way of automation
+MIN_ALIGNMENT_LEN = 1
+
+cluster = 'accelgor' # TODO: find a way of automation
 
 import os
 import subprocess
@@ -19,12 +21,16 @@ seq = ''
 for line in open(FASTA_FILE):
     if line.startswith('>'):
         if seq:
+            if prot_id in fasta_d:
+                prot_id = prot_id+'_copy'
             fasta_d[prot_id] = seq
             seq = ''
         prot_id = line.rstrip().lstrip('>')
     elif line:
         seq += line.rstrip()
 if seq:
+    if prot_id in fasta_d:
+        prot_id = prot_id+'_copy'
     fasta_d[prot_id] = seq
 
 all_seqs = {}
@@ -40,8 +46,8 @@ else: # create a copy of the multi-entry FASTA file
 if not SAVE_DIR.startswith('/'):
     SAVE_DIR = f'$PBS_O_WORKDIR/{SAVE_DIR}'
 
-for prot_id, seq in all_seqs.items():
-    script_content = f'''#!/bin/bash
+    for prot_id, seq in all_seqs.items():
+        script_content = f'''#!/bin/bash
 #PBS -N test_VIBFold_{prot_id}
 #PBS -l nodes=1:ppn={12 if cluster=='accelgor' else 8},gpus=1
 #PBS -l mem={125 if cluster=='accelgor' else 64}g
@@ -64,17 +70,18 @@ python VIBFold.py \
  --save_dir $SAVEDIR \
  --do_relax {DO_RELAX} \
  {"--no_templates" if not USE_TEMPLATES else ""} \
- --msa_mode {MSA_MODE}
+ --msa_mode {MSA_MODE} \
+ --min_alignment_len {MIN_ALIGNMENT_LEN}
 '''
 
-    scriptname = 'submit_new.sh'
-    f = open(scriptname,'w')
-    print(script_content,file=f)
-    f.close()
+        scriptname = 'submit_new.sh'
+        f = open(scriptname,'w')
+        print(script_content,file=f)
+        f.close()
 
-    print()
-    print(f'############# submitting {prot_id} #############')
-    subprocess.Popen(['echo',f'{prot_id}'],shell=False)
-    subprocess.Popen(['qsub',f'{scriptname}'],shell=False).wait()
-    subprocess.Popen(['rm',f'{scriptname}'],shell=False).wait()
-    print()
+        print()
+        print(f'############# submitting {prot_id} #############')
+        subprocess.Popen(['echo',f'{prot_id}'],shell=False)
+        subprocess.Popen(['qsub',f'{scriptname}'],shell=False).wait()
+        subprocess.Popen(['rm',f'{scriptname}'],shell=False).wait()
+        print()
