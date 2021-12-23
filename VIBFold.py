@@ -2,7 +2,6 @@ import argparse
 import itertools
 import re
 import logging
-import VIBFold_utils as utils
 from alphafold.model import data as alpha_data, config as alpha_config
 from alphafold.common import protein as alpha_protein
 from alphafold.relax import relax
@@ -46,7 +45,7 @@ pdb70_database_path=ALPHAFOLD_DATA_DIR + '/pdb70/pdb70'
 pdb_seqres_database_path=ALPHAFOLD_DATA_DIR + '/pdb_seqres/pdb_seqres.txt'
 uniprot_database_path = ALPHAFOLD_DATA_DIR + '/uniprot/uniprot.fasta' # for multimer
 
-def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_relax, max_recycles=3, tolerance=0, msa_mode='alphafold_default'):
+def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_relax, max_recycles=3, tolerance=0, msa_mode='alphafold_default', min_alignment_len=0):
     # process input parameters
     sequences = seq.split(':')
     jobname = "".join(jobname.split())
@@ -88,15 +87,17 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
 
         # Do MSA search
         logger.info('Starting MSA search (+ templates if req)')
-        feature_dict = utils.run_msa_search(msa_mode, query_sequences, fasta_file, use_templates, out_dir, jobname, logger)
+        feature_dict = run_msa_search(msa_mode, query_sequences, fasta_file, use_templates, out_dir, jobname, logger)
+        if min_alignment_len>1:
+            feature_dict = filter_short_alignments(feature_dict, min_alignment_len, len(sequences)>1)
         # Predict
         logger.info('Starting predictions...')
         unrelaxed_pdb_lines, unrelaxed_proteins, paes, plddts, ptms, iptms = predict_structures(logger,
-                                                                                                          model_params,
-                                                                                                          model_runner_12,
-                                                                                                          model_runner_345,
-                                                                                                          feature_dict,
-                                                                                                          model_used == 'multimer')
+                                                                                                  model_params,
+                                                                                                  model_runner_12,
+                                                                                                  model_runner_345,
+                                                                                                  feature_dict,
+                                                                                                  model_used == 'multimer')
         # rank models, relax, write pdb files
         pae_plddt_per_model = rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, paes, ptms, iptms, out_dir, jobname, do_relax, model_used=='multimer')
         # generate output images
@@ -104,7 +105,7 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         import pickle
         feature_dict['my_seq'] = query_sequences
         pickle.dump(feature_dict,file=open(out_dir+'/my_features.pkl','wb'))
-        utils.generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], out_dir, jobname)
+        generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], out_dir, jobname)
         # remove intermediate directories
         os.popen(f'rm -r {out_dir}/{jobname}_seq*_{"env" if use_env else "all"}/')
         logger.info(f'Permutation {perm_idx} finished!')
@@ -325,6 +326,27 @@ def pad_msa(np_example, min_num_seq):
         np_example['cluster_bias_mask'], ((0, min_num_seq - num_seq),))
   return np_example
 
+def filter_short_alignments(feature_dict, min_alignment_len, is_multimer):
+    alignment_masks = feature_dict['msa'] != 21
+    alignment_lengths = alignment_masks.sum(axis=1)
+    valid_lengths = alignment_lengths >= min_alignment_len
+    feature_dict['msa'] = feature_dict['msa'][valid_lengths]
+
+    if is_multimer:
+        feature_dict['deletion_matrix'] = feature_dict['deletion_matrix'][valid_lengths]
+        feature_dict['cluster_bias_mask'] = feature_dict['cluster_bias_mask'][valid_lengths]
+        feature_dict['bert_mask'] = feature_dict['bert_mask'][valid_lengths]
+        feature_dict['msa_mask'] = feature_dict['msa_mask'][valid_lengths]
+        feature_dict['deletion_mean'] = feature_dict['deletion_matrix'].transpose().mean(axis=1)  # not correct yet :-(
+        feature_dict['num_alignments'] = np.asarray(feature_dict['msa'].shape[0],dtype=np.int32)
+
+    else:
+        feature_dict['msa_uniprot_accession_identifiers'] = feature_dict['msa_uniprot_accession_identifiers'][valid_lengths]
+        feature_dict['msa_species_identifiers'] = feature_dict['msa_species_identifiers'][valid_lengths]
+        feature_dict['deletion_matrix_int'] = feature_dict['deletion_matrix_int'][valid_lengths]
+        feature_dict['num_alignments'] = feature_dict['msa'].shape[0]
+    return feature_dict
+
 # For each model to run, collect:
 # - predicted structure (unrelaxed) in pdb lines
 # - predicted structure (unrelaxed) as an object
@@ -462,6 +484,7 @@ if __name__ == "__main__":
     parser.add_argument('--no_templates',dest='use_templates',action='store_false')
     parser.set_defaults(use_templates=True)
     parser.add_argument('--msa_mode',type=str,default='mmseqs2_server',help='choose one of "mmseqs2_server", "mmseqs2_local", "alphafold_default", "single_sequence"',required=False)
+    parser.add_argument('--min_alignment_len',type=int,default=0,required=False)
     args = parser.parse_args()
     run_alphafold_advanced_complex(seq=args.seq,
                                    jobname=args.jobname,
@@ -470,5 +493,6 @@ if __name__ == "__main__":
                                    tolerance=args.tolerance,
                                    use_templates=args.use_templates,
                                    do_relax=args.do_relax,
-                                   msa_mode=args.msa_mode)
+                                   msa_mode=args.msa_mode,
+                                   min_alignment_len=args.min_alignment_len)
     print('Finished run!')
