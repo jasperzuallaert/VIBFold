@@ -1,58 +1,61 @@
-# TODO: dynamically change the PBS memory & time limit
-# TODO: think of how to deal with multi-entry fastas in multimer
-# TODO: restrict templates when using multi sequences
 
-FASTA_FILE = 'fastas/test.fasta' # location of fasta file between '' - absolute or relative path possible
-IS_COMPLEX = True                          # True or False
-MSA_MODE = 'alphafold_default'             # 'alphafold_default' or 'mmseqs2_server'
-SAVE_DIR = 'results/test'               # location of results directory between '' - abs or rel path possible
-DO_RELAX = 'best'                          # 'all', 'best' or 'none'
-USE_TEMPLATES = True # True, False - TODO: only True is supported currently
+FASTA_FILE = 'fastas/for_marlies/m2.fasta'    # location of fasta file between '' - absolute or relative path possible
+IS_COMPLEX = True                             # True or False
+MSA_MODE = 'alphafold_default'                   # 'alphafold_default' or 'mmseqs2_server'
+SAVE_DIR = 'results/debugging'                # location of results directory between '' - abs or rel path possible
+DO_RELAX = 'best'                             # 'all', 'best' or 'none'
+USE_TEMPLATES = False                          # True, False
+MAX_RECYCLES = 3                              # default == 3
 
-MIN_ALIGNMENT_LEN = 1
-
-cluster = 'accelgor' # TODO: find a way of automation
-
-import os
 import subprocess
+import os
 
-fasta_d = {}
-seq = ''
-for line in open(FASTA_FILE):
-    if line.startswith('>'):
-        if seq:
-            if prot_id in fasta_d:
-                prot_id = prot_id+'_copy'
-            fasta_d[prot_id] = seq
-            seq = ''
-        prot_id = line.rstrip().lstrip('>')
-    elif line:
-        seq += line.rstrip()
-if seq:
-    if prot_id in fasta_d:
-        prot_id = prot_id+'_copy'
-    fasta_d[prot_id] = seq
+def submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES):
+    assert ' ' not in FASTA_FILE, 'The name of your FASTA file cannot contain any spaces'
+    # automatically select accelgor/joltik based on output of 'ml'
+    module_info = subprocess.check_output('ml',shell=True).decode('utf-8')
+    cluster = 'accelgor' if 'accelgor' in module_info else \
+              'joltik' if 'joltik' in module_info else ''
+    if not cluster:
+        raise NotImplementedError('Cluster joltik/accelgor not found in "ml" output. Did you use "module swap cluster/joltik" (or other)?')
 
-all_seqs = {}
-if not IS_COMPLEX: # create one new FASTA file per entry
-    for prot_id, seq in fasta_d.items():
-        prot_id = prot_id.replace(' ', '_')
-        all_seqs[prot_id] = seq
-else: # create a copy of the multi-entry FASTA file
-    fasta_id = os.path.basename(FASTA_FILE).split('.')[0]
-    seqs = fasta_d.values()
-    all_seqs[fasta_id] = ':'.join(seqs)
+    fasta_d = {}
+    seq = ''
+    ctr = 1
+    for line in open(FASTA_FILE):
+        if line.startswith('>'):
+            if seq:
+                fasta_d[prot_id] = seq
+                seq = ''
+            prot_id = f'{ctr}_{line.rstrip().lstrip(">")}'
+            ctr+=1
+        elif line:
+            seq += line.rstrip()
+    if seq:
+        fasta_d[prot_id] = seq
 
-if not SAVE_DIR.startswith('/'):
-    SAVE_DIR = f'$PBS_O_WORKDIR/{SAVE_DIR}'
+    all_seqs = {}
+    if not IS_COMPLEX: # create one new FASTA file per entry
+        for prot_id, seq in fasta_d.items():
+            prot_id = prot_id.replace(' ', '_')
+            all_seqs[prot_id] = seq
+    else: # create a copy of the multi-entry FASTA file
+        fasta_id = os.path.basename(FASTA_FILE).split('.')[0]
+        seqs = fasta_d.values()
+        all_seqs[fasta_id] = ':'.join(seqs)
 
-    for prot_id, seq in all_seqs.items():
-        script_content = f'''#!/bin/bash
+    if not SAVE_DIR.startswith('/'):
+        SAVE_DIR = f'$PBS_O_WORKDIR/{SAVE_DIR}'
+
+        for prot_id, seq in all_seqs.items():
+            script_content = f'''#!/bin/bash
 #PBS -N test_VIBFold_{prot_id}
 #PBS -l nodes=1:ppn={12 if cluster=='accelgor' else 8},gpus=1
 #PBS -l mem={125 if cluster=='accelgor' else 64}g
-#PBS -l walltime=24:00:00
+#PBS -l walltime=48:00:00
 
+module load Python/3.8.6-GCCcore-10.2.0
+module load matplotlib/3.3.3-fosscuda-2020b
 module load AlphaFold/2.1.1-fosscuda-2020b
 export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20211201
 
@@ -71,17 +74,20 @@ python VIBFold.py \
  --do_relax {DO_RELAX} \
  {"--no_templates" if not USE_TEMPLATES else ""} \
  --msa_mode {MSA_MODE} \
- --min_alignment_len {MIN_ALIGNMENT_LEN}
+ --max_recycles {MAX_RECYCLES}
 '''
 
-        scriptname = 'submit_new.sh'
-        f = open(scriptname,'w')
-        print(script_content,file=f)
-        f.close()
+            scriptname = 'submit_new.sh'
+            f = open(scriptname,'w')
+            print(script_content,file=f)
+            f.close()
 
-        print()
-        print(f'############# submitting {prot_id} #############')
-        subprocess.Popen(['echo',f'{prot_id}'],shell=False)
-        subprocess.Popen(['qsub',f'{scriptname}'],shell=False).wait()
-        subprocess.Popen(['rm',f'{scriptname}'],shell=False).wait()
-        print()
+            print()
+            print(f'############# submitting {prot_id} #############')
+            subprocess.Popen(['echo',f'{prot_id}'],shell=False)
+            subprocess.Popen(['qsub',f'{scriptname}'],shell=False).wait()
+            subprocess.Popen(['rm',f'{scriptname}'],shell=False).wait()
+            print()
+
+if __name__ == "__main__":
+    submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES)

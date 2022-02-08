@@ -2,19 +2,21 @@ import argparse
 import itertools
 import re
 import logging
+import dataclasses
+import json
+import copy
 from alphafold.model import data as alpha_data, config as alpha_config
 from alphafold.common import protein as alpha_protein
 from alphafold.relax import relax
 from alphafold.model import model as alpha_model
 from random import randint
-# import colabfold as cf
-cf = None # not supported yet
 from alphafold.data import templates as alpha_templates
-from alphafold.data import feature_processing, msa_pairing
+from alphafold.data import feature_processing, msa_pairing, msa_identifiers
 from alphafold.data.tools import hhsearch
 from alphafold.data.tools import hmmsearch
 from alphafold.data import pipeline as alpha_pipeline
 from alphafold.data import templates
+from alphafold.data import parsers
 from alphafold.common import residue_constants
 from alphafold.data import pipeline_multimer
 import numpy as np
@@ -22,6 +24,7 @@ from matplotlib import pyplot as plt
 import alphafold
 import os
 import shutil
+import VIBFold_adapted_functions as adapted
 r = randint(0,100000)
 
 ALPHAFOLD_DATA_DIR = os.environ['ALPHAFOLD_DATA_DIR']
@@ -45,7 +48,7 @@ pdb70_database_path=ALPHAFOLD_DATA_DIR + '/pdb70/pdb70'
 pdb_seqres_database_path=ALPHAFOLD_DATA_DIR + '/pdb_seqres/pdb_seqres.txt'
 uniprot_database_path = ALPHAFOLD_DATA_DIR + '/uniprot/uniprot.fasta' # for multimer
 
-def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_relax, max_recycles=3, tolerance=0, msa_mode='alphafold_default', min_alignment_len=0):
+def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_relax, max_recycles=3, tolerance=0, msa_mode='alphafold_default'):
     # process input parameters
     sequences = seq.split(':')
     jobname = "".join(jobname.split())
@@ -55,9 +58,10 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
     # Load model parameters, same for all permutations
     model_params, model_runner_12, model_runner_345 = prepare_models(model_used, max_recycles, tolerance)
 
+    seq_to_msa_d = {}
     # if multiple sequences are present in the query, a single run is done for each of the permutations
     # Protein complexes with 'first A then B', will yield different results than 'first B then A'
-    for perm_idx, query_sequences in enumerate(itertools.permutations(sequences)):
+    for perm_idx, query_sequences in enumerate(set(itertools.permutations(sequences))):
         # the output dir gets a permutation number if applicable
         out_dir = f'{save_dir}/{jobname}' if len(sequences) == 1 else f'{save_dir}/{jobname}_permutation{perm_idx}'
         out_dir = out_dir.rstrip('/')
@@ -84,12 +88,29 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         logger.info(f'Parameters: max_recycles = {max_recycles}')
         logger.info(f'Parameters: recycling_tolerance = {tolerance}')
         logger.info(f'Started permutation # {perm_idx}')
+        print(f'Parameters: num_sequences = {len(query_sequences)}')
+        print(f'Parameters: model used = {model_used}')
+        print(f'Parameters: use_amber = {do_relax}')
+        print(f'Parameters: msa_mode = {msa_mode}')
+        print(f'Parameters: use_templates = {use_templates}')
+        print(f'Parameters: max_recycles = {max_recycles}')
+        print(f'Parameters: recycling_tolerance = {tolerance}')
+        print(f'Started permutation # {perm_idx}')
 
         # Do MSA search
         logger.info('Starting MSA search (+ templates if req)')
-        feature_dict = run_msa_search(msa_mode, query_sequences, fasta_file, use_templates, out_dir, jobname, logger)
-        if min_alignment_len>1:
-            feature_dict = filter_short_alignments(feature_dict, min_alignment_len, len(sequences)>1)
+        feature_dict = run_msa_search(msa_mode, query_sequences, fasta_file, seq_to_msa_d, use_templates, out_dir, jobname, logger)
+        # print('>>> feature_dict: ') ## TMP
+        # for k,v in feature_dict.items():
+        #     print('>>>>>',k,v.shape)
+        if use_templates:
+            try:
+                log_template_info(feature_dict, logger)
+            except Exception as exx:
+                logger.info('Exception encountered during template logging. Feel free to contact jasper.zuallaert@vib-ugent.be about this. Error message:')
+                logger.info(exx)
+        else:
+            logger.info('No templates used.')
         # Predict
         logger.info('Starting predictions...')
         unrelaxed_pdb_lines, unrelaxed_proteins, paes, plddts, ptms, iptms = predict_structures(logger,
@@ -107,7 +128,7 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         pickle.dump(feature_dict,file=open(out_dir+'/my_features.pkl','wb'))
         generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], out_dir, jobname)
         # remove intermediate directories
-        os.popen(f'rm -r {out_dir}/{jobname}_seq*_{"env" if use_env else "all"}/')
+        os.popen(f'rm -r {out_dir}/{jobname}_*{"env" if use_env else "all"}/')
         logger.info(f'Permutation {perm_idx} finished!')
 
 # Loads the models, and compiles them. Weights are loaded, but only at prediction time added to the model.
@@ -135,7 +156,7 @@ def prepare_models(model_used, max_recycles, tolerance):
                 model_runner_345 = alpha_model.RunModel(model_config, model_params[model_name])
     return model_params, model_runner_12, model_runner_345
 
-def run_msa_search(msa_type, query_sequences, query_fasta, use_templates, out_dir, jobname, logger):
+def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_templates, out_dir, jobname, logger):
     run_multimer_system = len(query_sequences) > 1
     if msa_type == 'alphafold_default':
         if run_multimer_system:
@@ -158,30 +179,33 @@ def run_msa_search(msa_type, query_sequences, query_fasta, use_templates, out_di
             use_small_bfd=False,
             use_precomputed_msas=False)
         if run_multimer_system:
-            data_pipeline = pipeline_multimer.DataPipeline(
+            data_pipeline = adapted.Cached_DataPipeline(
                 monomer_data_pipeline=monomer_data_pipeline,
                 jackhmmer_binary_path=jackhmmer_binary_path,
                 uniprot_database_path=uniprot_database_path,
-                use_precomputed_msas=False)
+                use_precomputed_msas=False,
+                seq_to_features_cache=seq_to_msa_d
+            )
         else:
             data_pipeline = monomer_data_pipeline
         msa_dir = f'{out_dir}/{jobname}_seq_all'
         if not os.path.exists(msa_dir): os.mkdir(msa_dir)
         feature_dict = data_pipeline.process(input_fasta_path=query_fasta, msa_output_dir=msa_dir) # is_prokaryote by default False for now
-        print('feature_dict.keys()',feature_dict.keys())
-        print('msa',type(feature_dict['msa']))
-        print('msa',feature_dict['msa'])
-        print('msa',feature_dict['msa'].shape)
+        if not use_templates:
+            feature_dict.update(mk_placeholder_template(0, feature_dict['seq_length']))
         return feature_dict
     elif msa_type == 'mmseqs2_server':
-        raise NotImplementedError('MMSeqs2 support not yet available.')
         if run_multimer_system:
             # special stuff
-            unpaired_a3m_lines = cf.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=False)
-            print('unp',len(unpaired_a3m_lines), [len(x) for x in unpaired_a3m_lines])
-            paired_a3m_lines = cf.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=True)
-            print('p',len(paired_a3m_lines), [len(x) for x in paired_a3m_lines])
-            template_features = [mk_placeholder_template(0,len(seq)) for seq in query_sequences]
+            if use_templates:
+                unpaired_a3m_lines, template_paths = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=True, use_pairing=False)
+                paired_a3m_lines = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=True)
+                template_features = [mk_template(query_sequence, a3m_lines, template_path, logger) if template_path
+                                     else mk_placeholder_template(0,len(query_sequence)) for query_sequence, a3m_lines, template_path in zip(query_sequences, unpaired_a3m_lines, template_paths)]
+            else:
+                unpaired_a3m_lines = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=False)
+                paired_a3m_lines = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=True)
+                template_features = [mk_placeholder_template(0,len(seq)) for seq in query_sequences]
 
             features_for_chain = {}
             chain_cnt = 0
@@ -192,82 +216,39 @@ def run_msa_search(msa_type, query_sequences, query_fasta, use_templates, out_di
                     **alpha_pipeline.make_msa_features([msa]),
                     **chain_temp_feat
                 }
+
+
                 parsed_paired_msa = alpha_pipeline.parsers.parse_a3m(chain_p_msa)
                 paired_feature_dict = {
-                    f"{k}_all_seq": v for k, v in alpha_pipeline.make_msa_features([parsed_paired_msa]).items()
+                    f"{k}_all_seq": v for k, v in adapted.my_make_msa_features_keep_duplicates([parsed_paired_msa]).items()
                 }
-                print('feature_dict###',feature_dict)
-                print('paired_feature_dict###',paired_feature_dict)
                 feature_dict.update(paired_feature_dict)
 
                 features_for_chain[chr(ord('A')+chain_cnt)] = feature_dict
                 chain_cnt += 1
 
-            return process_multimer_features(features_for_chain)
+            return adapted.process_multimer_features(features_for_chain)
 
         else:
             query_sequence = query_sequences[0]
             if use_templates:
-                a3m_lines, template_paths = cf.run_mmseqs2(query_sequence, f'{out_dir}/{jobname}', True, use_templates=True)
-                if template_paths is not None:
-                    template_features = mk_template(query_sequence, a3m_lines, template_paths, logger)
+                a3m_lines, template_paths = adapted.run_mmseqs2(query_sequence, f'{out_dir}/{jobname}', True, use_templates=True)
+                if template_paths[0] is not None:
+                    template_features = mk_template(query_sequence, a3m_lines[0], template_paths[0], logger)
                 else:
                     template_features = mk_placeholder_template(0, len(query_sequence))
             else:
-                a3m_lines = cf.run_mmseqs2(query_sequence, f'{out_dir}/{jobname}', True, use_templates=False)
+                a3m_lines = adapted.run_mmseqs2(query_sequence, f'{out_dir}/{jobname}', True, use_templates=False)
                 template_features = mk_placeholder_template(0, len(query_sequence))
-            msas = [alpha_pipeline.parsers.parse_a3m(a3m_lines)]
+            msas = [alpha_pipeline.parsers.parse_a3m(a3m_lines[0])]
             feature_dict = {
-                **alpha_pipeline.make_sequence_features(sequence=query_sequence, description="none", num_res=len(query_sequences)),
+                **alpha_pipeline.make_sequence_features(sequence=query_sequence, description="none", num_res=len(query_sequence)),
                 **alpha_pipeline.make_msa_features(msas=msas),
                 **template_features
             }
             return feature_dict
     else:
         raise NotImplementedError(msa_type)
-
-def process_multimer_features(features_for_chain): # copied from AlphaFold repo
-    all_chain_features = {}
-    for chain_id, chain_features in features_for_chain.items():
-        all_chain_features[chain_id] = pipeline_multimer.convert_monomer_features(
-            chain_features, chain_id
-        )
-
-    all_chain_features = pipeline_multimer.add_assembly_features(all_chain_features)
-    feature_processing.process_unmerged_features(all_chain_features)
-    np_chains_list = list(all_chain_features.values())
-    pair_msa_sequences = not feature_processing._is_homomer_or_monomer(np_chains_list)
-    chains = list(np_chains_list)
-    chain_keys = chains[0].keys()
-    updated_chains = []
-    for chain_num, chain in enumerate(chains):
-        new_chain = {k: v for k, v in chain.items() if "_all_seq" not in k}
-        for feature_name in chain_keys:
-            if feature_name.endswith("_all_seq"):
-                feats_padded = msa_pairing.pad_features(
-                    chain[feature_name], feature_name
-                )
-                new_chain[feature_name] = feats_padded
-        new_chain["num_alignments_all_seq"] = np.asarray(
-            len(np_chains_list[chain_num]["msa_all_seq"])
-        )
-        updated_chains.append(new_chain)
-    np_chains_list = updated_chains
-    np_chains_list = feature_processing.crop_chains(
-        np_chains_list,
-        msa_crop_size=feature_processing.MSA_CROP_SIZE,
-        pair_msa_sequences=pair_msa_sequences,
-        max_templates=feature_processing.MAX_TEMPLATES,
-    )
-    np_example = feature_processing.msa_pairing.merge_chain_features(
-        np_chains_list=np_chains_list,
-        pair_msa_sequences=pair_msa_sequences,
-        max_templates=feature_processing.MAX_TEMPLATES,
-    )
-    np_example = feature_processing.process_final(np_example)
-
-    np_example = pipeline_multimer.pad_msa(np_example, min_num_seq=512)
-    return np_example
 
 # returns a filled in template dict
 # the dict contains:
@@ -279,7 +260,7 @@ def process_multimer_features(features_for_chain): # copied from AlphaFold repo
 # Eventually, this dict is processed by AlphaFold code and turned into input features for AlphaFold
 def mk_template(query_sequence, a3m_lines, template_paths, logger):
     # default settings
-    template_featurizer = alpha_templates.TemplateHitFeaturizer(
+    template_featurizer = alpha_templates.HhsearchHitFeaturizer(
         mmcif_dir=template_paths,
         max_template_date="2100-01-01",
         max_hits=20,
@@ -290,8 +271,6 @@ def mk_template(query_sequence, a3m_lines, template_paths, logger):
     hhsearch_result = hhsearch_pdb70_runner.query(a3m_lines)
     hhsearch_hits = alphafold.data.parsers.parse_hhr(hhsearch_result)
     templates_result = template_featurizer.get_templates(query_sequence,
-                                                         None,
-                                                         None,
                                                          hhsearch_hits)
 
     logger.info('Templates found:')
@@ -303,49 +282,25 @@ def mk_template(query_sequence, a3m_lines, template_paths, logger):
         query_start, query_stop = min(x for x in hit.indices_query if x != -1), max(hit.indices_query)
         hit_start, hit_stop = min(x for x in hit.indices_hit if x != -1), max(hit.indices_hit)
         logger.info('\t'.join(str(x) for x in [id, query_start, query_stop, hit_start, hit_stop, info]))
-    return templates_result.features
+
+    # check for empty template - otherwise problems with shapes
+    if len(templates_result.features['template_aatype']) == 0:
+        return mk_placeholder_template(0, len(query_sequence))
+    else:
+        return templates_result.features
 
 # returns a template placeholder, with size None in the first dimension
 def mk_placeholder_template(num_templates_, num_res_):
     return {
         'template_aatype': np.zeros([num_templates_, num_res_, 22], np.float32),
+        'template_all_atom_mask': np.zeros([num_templates_, num_res_, 37], np.float32),
         'template_all_atom_masks': np.zeros([num_templates_, num_res_, 37], np.float32),
         'template_all_atom_positions': np.zeros([num_templates_, num_res_, 37, 3], np.float32),  # 3d coords
+        'template_sequence': np.zeros(20),
         'template_domain_names': np.zeros([num_templates_], np.float32),
         'template_sum_probs': np.zeros([num_templates_, 1], np.float32),
     }
 
-def pad_msa(np_example, min_num_seq):
-  np_example = dict(np_example)
-  num_seq = np_example['msa'].shape[0]
-  if num_seq < min_num_seq:
-    for feat in ('msa', 'deletion_matrix', 'bert_mask', 'msa_mask'):
-      np_example[feat] = np.pad(
-          np_example[feat], ((0, min_num_seq - num_seq), (0, 0)))
-    np_example['cluster_bias_mask'] = np.pad(
-        np_example['cluster_bias_mask'], ((0, min_num_seq - num_seq),))
-  return np_example
-
-def filter_short_alignments(feature_dict, min_alignment_len, is_multimer):
-    alignment_masks = feature_dict['msa'] != 21
-    alignment_lengths = alignment_masks.sum(axis=1)
-    valid_lengths = alignment_lengths >= min_alignment_len
-    feature_dict['msa'] = feature_dict['msa'][valid_lengths]
-
-    if is_multimer:
-        feature_dict['deletion_matrix'] = feature_dict['deletion_matrix'][valid_lengths]
-        feature_dict['cluster_bias_mask'] = feature_dict['cluster_bias_mask'][valid_lengths]
-        feature_dict['bert_mask'] = feature_dict['bert_mask'][valid_lengths]
-        feature_dict['msa_mask'] = feature_dict['msa_mask'][valid_lengths]
-        feature_dict['deletion_mean'] = feature_dict['deletion_matrix'].transpose().mean(axis=1)  # not correct yet :-(
-        feature_dict['num_alignments'] = np.asarray(feature_dict['msa'].shape[0],dtype=np.int32)
-
-    else:
-        feature_dict['msa_uniprot_accession_identifiers'] = feature_dict['msa_uniprot_accession_identifiers'][valid_lengths]
-        feature_dict['msa_species_identifiers'] = feature_dict['msa_species_identifiers'][valid_lengths]
-        feature_dict['deletion_matrix_int'] = feature_dict['deletion_matrix_int'][valid_lengths]
-        feature_dict['num_alignments'] = feature_dict['msa'].shape[0]
-    return feature_dict
 
 # For each model to run, collect:
 # - predicted structure (unrelaxed) in pdb lines
@@ -392,11 +347,15 @@ def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, pa
         with open(unrelaxed_pdb_path, 'w') as f:
             f.write(unrelaxed_pdb_lines[r])
         if (do_relax == 'best' and n == 0) or (do_relax == 'all'):
-            amber_relaxer = relax.AmberRelaxation(max_iterations=0, tolerance=2.39, stiffness=10.0, exclude_residues=[], max_outer_iterations=20)
-            relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_proteins[r])
-            relaxed_pdb_path = f'{out_dir}/{jobname}_relaxed_model_{n + 1}.pdb'
-            with open(relaxed_pdb_path, 'w') as f:
-                f.write(relaxed_pdb_str)
+            try:
+                amber_relaxer = relax.AmberRelaxation(max_iterations=0, tolerance=2.39, stiffness=10.0, exclude_residues=[], max_outer_iterations=20)
+                relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_proteins[r])
+                relaxed_pdb_path = f'{out_dir}/{jobname}_relaxed_model_{n + 1}.pdb'
+                with open(relaxed_pdb_path, 'w') as f:
+                    f.write(relaxed_pdb_str)
+            except ValueError:
+                print('Error during relaxation - skipped!')
+                logger.info('Error during relaxation - skipped!')
         plddt_pae_per_model[f"model_{n + 1}"] = {"plddt": plddts[r], "pae": paes[r]}
     return plddt_pae_per_model
 
@@ -405,7 +364,6 @@ def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, pa
 # - the pLDDT per model
 # - the PAE per model
 def generate_output_images(seqs, pae_plddt_per_model, msa, out_dir, jobname):
-    print(f'debugging: len(seqs) in generate_output_images is {len(seqs)}')
     # gather MSA info
     if len(seqs) > 1:
         seq = ''.join(seqs)
@@ -473,6 +431,39 @@ def get_sequences_from_fasta(fasta_file):
         seqs.append(seq)
     return seqs
 
+def log_template_info(feature_dict, logger):
+    if 'template_domain_names' in feature_dict: # monomer
+        logger.info('Templates shown here are reduced to 4 later on in the pipeline.')
+
+    residue_idx = feature_dict['residue_index']
+    template_aatype = feature_dict['template_aatype']
+    chain_starts = [idx for idx in range(len(residue_idx)) if residue_idx[idx] == 0]
+    chain_ids = np.zeros_like(template_aatype[0])
+    for chain_start_idx in chain_starts:
+        chain_ids[chain_start_idx:]+=1
+
+    logger.info('Templates found:')
+    for k, single_template_aatype in enumerate(template_aatype):
+        fros, tos = [], []
+        idx = 0
+        while True:
+            while idx < len(single_template_aatype) and single_template_aatype[idx] == 21:
+                idx += 1
+            if idx == len(single_template_aatype): # if this is the case, we are at the end of the sequence
+                break
+            chain_id = chain_ids[idx]
+            fros.append(idx)
+            while idx < len(single_template_aatype) and single_template_aatype[idx] != 21 and chain_id == chain_ids[idx]:
+                idx += 1
+            tos.append(idx-1)
+            if idx == len(single_template_aatype): # if this is the case, we are at the end of the sequence
+                break
+        for fro, to in zip(fros, tos):
+            chain_id = chain_ids[fro]
+            assert chain_id == chain_ids[to]
+            logger.info(f' ({k+1}) At chain #{chain_id}, positions [{residue_idx[fro]}, {residue_idx[to]}]')
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--seq',help='the input sequence or sequences (in case of multiple, separate with ":"')
@@ -484,7 +475,6 @@ if __name__ == "__main__":
     parser.add_argument('--no_templates',dest='use_templates',action='store_false')
     parser.set_defaults(use_templates=True)
     parser.add_argument('--msa_mode',type=str,default='mmseqs2_server',help='choose one of "mmseqs2_server", "mmseqs2_local", "alphafold_default", "single_sequence"',required=False)
-    parser.add_argument('--min_alignment_len',type=int,default=0,required=False)
     args = parser.parse_args()
     run_alphafold_advanced_complex(seq=args.seq,
                                    jobname=args.jobname,
@@ -493,6 +483,5 @@ if __name__ == "__main__":
                                    tolerance=args.tolerance,
                                    use_templates=args.use_templates,
                                    do_relax=args.do_relax,
-                                   msa_mode=args.msa_mode,
-                                   min_alignment_len=args.min_alignment_len)
+                                   msa_mode=args.msa_mode)
     print('Finished run!')
