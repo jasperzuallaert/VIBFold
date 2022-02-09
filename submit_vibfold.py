@@ -1,5 +1,5 @@
 
-FASTA_FILE = 'fastas/for_marlies/m2.fasta'    # location of fasta file between '' - absolute or relative path possible
+FASTA_FILE = 'fastas/some_directory/m2.fasta'    # location of fasta file between '' - absolute or relative path possible
 IS_COMPLEX = True                             # True or False
 MSA_MODE = 'alphafold_default'                   # 'alphafold_default' or 'mmseqs2_server'
 SAVE_DIR = 'results/debugging'                # location of results directory between '' - abs or rel path possible
