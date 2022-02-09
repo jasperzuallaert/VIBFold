@@ -55,6 +55,7 @@ def submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, 
 #PBS -l walltime=48:00:00
 
 module load Python/3.8.6-GCCcore-10.2.0
+module load tqdm/4.60.0-GCCcore-10.2.0
 module load matplotlib/3.3.3-fosscuda-2020b
 module load AlphaFold/2.1.1-fosscuda-2020b
 export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20211201
