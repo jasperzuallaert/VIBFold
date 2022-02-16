@@ -200,8 +200,18 @@ def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_tem
             if use_templates:
                 unpaired_a3m_lines, template_paths = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=True, use_pairing=False)
                 paired_a3m_lines = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=True)
-                template_features = [mk_template(query_sequence, a3m_lines, template_path, logger) if template_path
-                                     else mk_placeholder_template(0,len(query_sequence)) for query_sequence, a3m_lines, template_path in zip(query_sequences, unpaired_a3m_lines, template_paths)]
+                template_features = []
+                for query_sequence, a3m_lines, template_path in zip(query_sequences, unpaired_a3m_lines, template_paths):
+                    tt = None
+                    if template_path:
+                        try:
+                            tt = mk_template(query_sequence, a3m_lines, template_path, logger)
+                        except RuntimeError:
+                            print(f'Error in template construction for {template_path}')
+                            logger.info(f'Error in template construction for {template_path}')
+                    if tt == None:
+                        tt = mk_placeholder_template(0,len(query_sequence))
+                    template_features.append(tt)
             else:
                 unpaired_a3m_lines = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=False)
                 paired_a3m_lines = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=True)
@@ -437,6 +447,8 @@ def log_template_info(feature_dict, logger):
 
     residue_idx = feature_dict['residue_index']
     template_aatype = feature_dict['template_aatype']
+    if len(template_aatype.shape) == 3: # extra last dimension, one-hot encoded
+        template_aatype = template_aatype.argmax(axis=-1)
     chain_starts = [idx for idx in range(len(residue_idx)) if residue_idx[idx] == 0]
     chain_ids = np.zeros_like(template_aatype[0])
     for chain_start_idx in chain_starts:
