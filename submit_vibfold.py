@@ -1,10 +1,10 @@
 
-FASTA_FILE = 'fastas/some_directory/m2.fasta'    # location of fasta file between '' - absolute or relative path possible
+FASTA_FILE = 'fastas/some_name.fasta'    # location of fasta file between '' - absolute or relative path possible
 IS_COMPLEX = True                             # True or False
-MSA_MODE = 'alphafold_default'                   # 'alphafold_default' or 'mmseqs2_server'
-SAVE_DIR = 'results/debugging'                # location of results directory between '' - abs or rel path possible
+MSA_MODE = 'mmseqs2_server'                   # 'alphafold_default' or 'mmseqs2_server'
+SAVE_DIR = 'results/some_directory'                # location of results directory between '' - abs or rel path possible
 DO_RELAX = 'best'                             # 'all', 'best' or 'none'
-USE_TEMPLATES = False                          # True, False
+USE_TEMPLATES = True                          # True, False
 MAX_RECYCLES = 3                              # default == 3
 
 import subprocess
@@ -55,7 +55,9 @@ def submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, 
 #PBS -l walltime=48:00:00
 
 module load Python/3.8.6-GCCcore-10.2.0
-module load tqdm/4.60.0-GCCcore-10.2.0
+
+{'module load tqdm/4.56.2-GCCcore-10.2.0' if cluster == 'accelgor' else 
+'module load tqdm/4.60.0-GCCcore-10.2.0'}
 module load matplotlib/3.3.3-fosscuda-2020b
 module load AlphaFold/2.1.1-fosscuda-2020b
 export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20211201
