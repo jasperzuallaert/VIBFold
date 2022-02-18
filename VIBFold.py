@@ -25,6 +25,8 @@ import alphafold
 import os
 import shutil
 import VIBFold_adapted_functions as adapted
+import pickle
+
 r = randint(0,100000)
 
 ALPHAFOLD_DATA_DIR = os.environ['ALPHAFOLD_DATA_DIR']
@@ -100,9 +102,13 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         # Do MSA search
         logger.info('Starting MSA search (+ templates if req)')
         feature_dict = run_msa_search(msa_mode, query_sequences, fasta_file, seq_to_msa_d, use_templates, out_dir, jobname, logger)
+        pickle.dump(feature_dict,file=open(out_dir+'/features_for_debugging.pkl','wb'))
         # print('>>> feature_dict: ') ## TMP
         # for k,v in feature_dict.items():
-        #     print('>>>>>',k,v.shape)
+        #     try:
+        #         print('>>>>>',k,v.shape)
+        #     except AttributeError:
+        #         print('>>>>>',k)
         if use_templates:
             try:
                 log_template_info(feature_dict, logger)
@@ -122,10 +128,8 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         # rank models, relax, write pdb files
         pae_plddt_per_model = rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, paes, ptms, iptms, out_dir, jobname, do_relax, model_used=='multimer')
         # generate output images
+
         logger.info('Generating output images...')
-        import pickle
-        feature_dict['my_seq'] = query_sequences
-        pickle.dump(feature_dict,file=open(out_dir+'/my_features.pkl','wb'))
         generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], out_dir, jobname)
         # remove intermediate directories
         os.popen(f'rm -r {out_dir}/{jobname}_*{"env" if use_env else "all"}/')
@@ -192,7 +196,10 @@ def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_tem
         if not os.path.exists(msa_dir): os.mkdir(msa_dir)
         feature_dict = data_pipeline.process(input_fasta_path=query_fasta, msa_output_dir=msa_dir) # is_prokaryote by default False for now
         if not use_templates:
-            feature_dict.update(mk_placeholder_template(0, feature_dict['seq_length']))
+            for key in list(feature_dict.keys()):
+                if key.startswith('template_'):
+                    del feature_dict[key]
+            feature_dict.update(mk_placeholder_template(0, sum(len(x) for x in query_sequences)))
         return feature_dict
     elif msa_type == 'mmseqs2_server':
         if run_multimer_system:
