@@ -1,8 +1,8 @@
 
-MAIN_FASTA = 'fastas/for_yehudi.fasta' # list of proteins, to interact with each of the proteins in CANDIDATES_FASTA
-CANDIDATES_FASTA = 'fastas/for_bert.fasta' # list of proteins, to interact with each of the proteins in MAIN_FASTA
+MAIN_FASTA = 'fastas/first.fasta' # list of proteins, to interact with each of the proteins in CANDIDATES_FASTA
+CANDIDATES_FASTA = 'fastas/second.fasta' # list of proteins, to interact with each of the proteins in MAIN_FASTA
 
-MSA_MODE = 'mmseqs2_server'                   # 'alphafold_default' or 'mmseqs2_server'
+MSA_MODE = 'alphafold_default'                # 'alphafold_default' or 'mmseqs2_server'
 SAVE_DIR = 'results/debugging'                # location of results directory between '' - abs or rel path possible
 DO_RELAX = 'best'                             # 'all', 'best' or 'none'
 USE_TEMPLATES = True                          # True, False
