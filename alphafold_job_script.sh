@@ -6,8 +6,8 @@
 
 PROTEIN=rbd
 
-module load AlphaFold/2.1.1-fosscuda-2020b
-export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20211201
+module load AlphaFold/2.2.2-foss-2021a
+export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20220701
 
 WORKDIR=$VSC_DATA/alphafold/runs/$PBS_JOBID-$PROTEIN
 mkdir -p $WORKDIR
