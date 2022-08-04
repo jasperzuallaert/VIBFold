@@ -67,7 +67,6 @@ def my_make_msa_features_keep_duplicates(msas):
 
   int_msa = []
   deletion_matrix = []
-  uniprot_accession_ids = []
   species_ids = []
   for msa_index, msa in enumerate(msas):
     if not msa:
@@ -78,8 +77,6 @@ def my_make_msa_features_keep_duplicates(msas):
       deletion_matrix.append(msa.deletion_matrix[sequence_index])
       identifiers = msa_identifiers.get_identifiers(
           msa.descriptions[sequence_index])
-      uniprot_accession_ids.append(
-          identifiers.uniprot_accession_id.encode('utf-8'))
       species_ids.append(identifiers.species_id.encode('utf-8'))
 
   num_res = len(msas[0].sequences[0])
@@ -88,8 +85,6 @@ def my_make_msa_features_keep_duplicates(msas):
   features['deletion_matrix_int'] = np.array(deletion_matrix, dtype=np.int32)
   features['msa'] = np.array(int_msa, dtype=np.int32)
   features['num_alignments'] = np.array([num_alignments] * num_res, dtype=np.int32)
-  features['msa_uniprot_accession_identifiers'] = np.array(
-      uniprot_accession_ids, dtype=np.object_)
   features['msa_species_identifiers'] = np.array(species_ids, dtype=np.object_)
   return features
 
@@ -105,8 +100,7 @@ class Cached_DataPipeline(pipeline_multimer.DataPipeline):  # copied from AlphaF
 
     def process(self,
                 input_fasta_path: str,
-                msa_output_dir: str,
-                is_prokaryote: bool = False) -> alpha_pipeline.FeatureDict:
+                msa_output_dir: str) -> alpha_pipeline.FeatureDict:
         """Runs alignment tools on the input sequences and creates features."""
         with open(input_fasta_path) as f:
             input_fasta_str = f.read()
@@ -138,7 +132,7 @@ class Cached_DataPipeline(pipeline_multimer.DataPipeline):  # copied from AlphaF
             self.seq_to_features_cache[fasta_chain.sequence] = copy.deepcopy(chain_features)
 
         all_chain_features = pipeline_multimer.add_assembly_features(all_chain_features)
-        np_example = feature_processing.pair_and_merge(all_chain_features=all_chain_features, is_prokaryote=is_prokaryote)
+        np_example = feature_processing.pair_and_merge(all_chain_features=all_chain_features)
         # Pad MSA to avoid zero-sized extra_msa.
         np_example = pad_msa(np_example, 512)
 
@@ -168,7 +162,7 @@ TQDM_BAR_FORMAT = '{l_bar}{bar}| {n_fmt}/{total_fmt} [elapsed: {elapsed} remaini
 
 def run_mmseqs2(x, prefix, use_env=True, use_filter=True,
                 use_templates=False, filter=None, use_pairing=False,
-                host_url="https://a3m.mmseqs.com"):
+                host_url="https://api.colabfold.com"):
   submission_endpoint = "ticket/pair" if use_pairing else "ticket/msa"
 
   def submit(seqs, mode, N=101):
@@ -311,7 +305,7 @@ def run_mmseqs2(x, prefix, use_env=True, use_filter=True,
       if not os.path.isdir(TMPL_PATH):
         os.mkdir(TMPL_PATH)
         TMPL_LINE = ",".join(TMPL[:20])
-        os.system(f"curl -s https://a3m-templates.mmseqs.com/template/{TMPL_LINE} | tar xzf - -C {TMPL_PATH}/")
+        os.system(f"curl -s -L {host_url}/template/{TMPL_LINE} | tar xzf - -C {TMPL_PATH}/")
         os.system(f"cp {TMPL_PATH}/pdb70_a3m.ffindex {TMPL_PATH}/pdb70_cs219.ffindex")
         os.system(f"touch {TMPL_PATH}/pdb70_cs219.ffdata")
       template_paths[k] = TMPL_PATH

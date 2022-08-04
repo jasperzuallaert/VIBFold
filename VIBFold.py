@@ -102,6 +102,7 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         # Do MSA search
         logger.info('Starting MSA search (+ templates if req)')
         feature_dict = run_msa_search(msa_mode, query_sequences, fasta_file, seq_to_msa_d, use_templates, out_dir, jobname, logger)
+
         pickle.dump(feature_dict,file=open(out_dir+'/features_for_debugging.pkl','wb'))
         # print('>>> feature_dict: ') ## TMP
         # for k,v in feature_dict.items():
@@ -132,7 +133,7 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         logger.info('Generating output images...')
         generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], out_dir, jobname)
         # remove intermediate directories
-        os.popen(f'rm -r {out_dir}/{jobname}_*{"env" if use_env else "all"}/')
+        os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else "all"}/')
         logger.info(f'Permutation {perm_idx} finished!')
 
 # Loads the models, and compiles them. Weights are loaded, but only at prediction time added to the model.
@@ -140,7 +141,7 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
 def prepare_models(model_used, max_recycles, tolerance):
     model_params = {}
     model_runner_12, model_runner_345 = None, None
-    model_extension = 'ptm' if model_used == 'monomer_ptm' else 'multimer'
+    model_extension = 'ptm' if model_used == 'monomer_ptm' else 'multimer_v2'
     for model_num in range(1,6):
         model_name = f'model_{model_num}_{model_extension}'
         model_params[model_name] = alpha_data.get_model_haiku_params(model_name=model_name, data_dir=ALPHAFOLD_DATA_DIR)
@@ -162,13 +163,14 @@ def prepare_models(model_used, max_recycles, tolerance):
 
 def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_templates, out_dir, jobname, logger):
     run_multimer_system = len(query_sequences) > 1
+    max_template_hits = MAX_TEMPLATE_HITS if use_templates else 0
     if msa_type == 'alphafold_default':
         if run_multimer_system:
             template_searcher = hmmsearch.Hmmsearch(binary_path=hmmsearch_binary_path, hmmbuild_binary_path=hmmbuild_binary_path, database_path=pdb_seqres_database_path)
-            template_featurizer = templates.HmmsearchHitFeaturizer(mmcif_dir=template_mmcif_dir, max_template_date='2021-10-28', max_hits=MAX_TEMPLATE_HITS, kalign_binary_path=kalign_binary_path, release_dates_path=None, obsolete_pdbs_path=obsolete_pdbs_path)
+            template_featurizer = templates.HmmsearchHitFeaturizer(mmcif_dir=template_mmcif_dir, max_template_date='2100-10-28', max_hits=max_template_hits, kalign_binary_path=kalign_binary_path, release_dates_path=None, obsolete_pdbs_path=obsolete_pdbs_path)
         else:
             template_searcher = hhsearch.HHSearch(binary_path=hhsearch_binary_path, databases=[pdb70_database_path])
-            template_featurizer = templates.HhsearchHitFeaturizer(mmcif_dir=template_mmcif_dir, max_template_date='2021-10-28', max_hits=MAX_TEMPLATE_HITS, kalign_binary_path=kalign_binary_path, release_dates_path=None, obsolete_pdbs_path=obsolete_pdbs_path)
+            template_featurizer = templates.HhsearchHitFeaturizer(mmcif_dir=template_mmcif_dir, max_template_date='2100-10-28', max_hits=max_template_hits, kalign_binary_path=kalign_binary_path, release_dates_path=None, obsolete_pdbs_path=obsolete_pdbs_path)
         logger.info('setting up data pipeline')
         monomer_data_pipeline = alpha_pipeline.DataPipeline(
             jackhmmer_binary_path=jackhmmer_binary_path,
@@ -194,12 +196,12 @@ def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_tem
             data_pipeline = monomer_data_pipeline
         msa_dir = f'{out_dir}/{jobname}_seq_all'
         if not os.path.exists(msa_dir): os.mkdir(msa_dir)
-        feature_dict = data_pipeline.process(input_fasta_path=query_fasta, msa_output_dir=msa_dir) # is_prokaryote by default False for now
-        if not use_templates:
-            for key in list(feature_dict.keys()):
-                if key.startswith('template_'):
-                    del feature_dict[key]
-            feature_dict.update(mk_placeholder_template(0, sum(len(x) for x in query_sequences)))
+        feature_dict = data_pipeline.process(input_fasta_path=query_fasta, msa_output_dir=msa_dir)
+        # if not use_templates:
+        #     for key in list(feature_dict.keys()):
+        #         if key.startswith('template_'):
+        #             del feature_dict[key]
+        #     feature_dict.update(mk_placeholder_template(1, sum(len(x) for x in query_sequences)))
         return feature_dict
     elif msa_type == 'mmseqs2_server':
         if run_multimer_system:
@@ -208,21 +210,21 @@ def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_tem
                 unpaired_a3m_lines, template_paths = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=True, use_pairing=False)
                 paired_a3m_lines = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=True)
                 template_features = []
-                for query_sequence, a3m_lines, template_path in zip(query_sequences, unpaired_a3m_lines, template_paths):
+                for query_sequence, a3m_lines_unpaired, template_path in zip(query_sequences, unpaired_a3m_lines, template_paths):
                     tt = None
                     if template_path:
                         try:
-                            tt = mk_template(query_sequence, a3m_lines, template_path, logger)
+                            tt = mk_template(query_sequence, a3m_lines_unpaired, template_path, logger)
                         except RuntimeError:
                             print(f'Error in template construction for {template_path}')
                             logger.info(f'Error in template construction for {template_path}')
                     if tt == None:
-                        tt = mk_placeholder_template(0,len(query_sequence))
+                        tt = mk_placeholder_template(1,len(query_sequence))
                     template_features.append(tt)
             else:
                 unpaired_a3m_lines = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=False)
                 paired_a3m_lines = adapted.run_mmseqs2(query_sequences, f'{out_dir}/{jobname}', True, use_templates=False, use_pairing=True)
-                template_features = [mk_placeholder_template(0,len(seq)) for seq in query_sequences]
+                template_features = [mk_placeholder_template(1,len(seq)) for seq in query_sequences]
 
             features_for_chain = {}
             chain_cnt = 0
@@ -233,7 +235,6 @@ def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_tem
                     **alpha_pipeline.make_msa_features([msa]),
                     **chain_temp_feat
                 }
-
 
                 parsed_paired_msa = alpha_pipeline.parsers.parse_a3m(chain_p_msa)
                 paired_feature_dict = {
@@ -249,20 +250,23 @@ def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_tem
         else:
             query_sequence = query_sequences[0]
             if use_templates:
-                a3m_lines, template_paths = adapted.run_mmseqs2(query_sequence, f'{out_dir}/{jobname}', True, use_templates=True)
+                a3m_lines_unpaired, template_paths = adapted.run_mmseqs2(query_sequence, f'{out_dir}/{jobname}', True, use_templates=True)
                 if template_paths[0] is not None:
-                    template_features = mk_template(query_sequence, a3m_lines[0], template_paths[0], logger)
+                    template_features = mk_template(query_sequence, a3m_lines_unpaired[0], template_paths[0], logger)
                 else:
-                    template_features = mk_placeholder_template(0, len(query_sequence))
+                    template_features = mk_placeholder_template(1, len(query_sequence))
             else:
-                a3m_lines = adapted.run_mmseqs2(query_sequence, f'{out_dir}/{jobname}', True, use_templates=False)
-                template_features = mk_placeholder_template(0, len(query_sequence))
-            msas = [alpha_pipeline.parsers.parse_a3m(a3m_lines[0])]
+                a3m_lines_unpaired = adapted.run_mmseqs2(query_sequence, f'{out_dir}/{jobname}', True, use_templates=False)
+                template_features = mk_placeholder_template(1, len(query_sequence))
+                print('bbb template_aatype',template_features['template_aatype'].shape if 'template_aatype' in template_features else 'not present')
+
+            msas = [alpha_pipeline.parsers.parse_a3m(a3m_lines_unpaired[0])]
             feature_dict = {
                 **alpha_pipeline.make_sequence_features(sequence=query_sequence, description="none", num_res=len(query_sequence)),
                 **alpha_pipeline.make_msa_features(msas=msas),
                 **template_features
             }
+
             return feature_dict
     else:
         raise NotImplementedError(msa_type)
@@ -291,7 +295,7 @@ def mk_template(query_sequence, a3m_lines, template_paths, logger):
                                                          hhsearch_hits)
 
     logger.info('Templates found:')
-    logger.info('\t'.join(['hit_id','query_start_idx', 'query_stop_idx', 'hit_start_idx', 'hit_stop_idx','hit_info']))
+    logger.info('\t'.join(['hit_id','query_start_idx', 'query_stop_idx', 'hit_start_idx', 'hit_stop_idx', 'hit_info']))
     for hit in hhsearch_hits:
         name = hit.name
         id = name.split(' ')[0]
@@ -302,15 +306,16 @@ def mk_template(query_sequence, a3m_lines, template_paths, logger):
 
     # check for empty template - otherwise problems with shapes
     if len(templates_result.features['template_aatype']) == 0:
-        return mk_placeholder_template(0, len(query_sequence))
+        return mk_placeholder_template(1, len(query_sequence))
     else:
         return templates_result.features
 
 # returns a template placeholder, with size None in the first dimension
 def mk_placeholder_template(num_templates_, num_res_):
+    print(f'Dummy template created ({num_templates_})') ### TMP
     return {
         'template_aatype': np.zeros([num_templates_, num_res_, 22], np.float32),
-        'template_all_atom_mask': np.zeros([num_templates_, num_res_, 37], np.float32),
+        # 'template_all_atom_mask': np.zeros([num_templates_, num_res_, 37], np.float32),
         'template_all_atom_masks': np.zeros([num_templates_, num_res_, 37], np.float32),
         'template_all_atom_positions': np.zeros([num_templates_, num_res_, 37, 3], np.float32),  # 3d coords
         'template_sequence': np.zeros(20),
@@ -365,7 +370,7 @@ def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, pa
             f.write(unrelaxed_pdb_lines[r])
         if (do_relax == 'best' and n == 0) or (do_relax == 'all'):
             try:
-                amber_relaxer = relax.AmberRelaxation(max_iterations=0, tolerance=2.39, stiffness=10.0, exclude_residues=[], max_outer_iterations=20)
+                amber_relaxer = relax.AmberRelaxation(max_iterations=0, tolerance=2.39, stiffness=10.0, exclude_residues=[], max_outer_iterations=20, use_gpu=True)
                 relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_proteins[r])
                 relaxed_pdb_path = f'{out_dir}/{jobname}_relaxed_model_{n + 1}.pdb'
                 with open(relaxed_pdb_path, 'w') as f:

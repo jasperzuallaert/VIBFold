@@ -1,8 +1,8 @@
 
-FASTA_FILE = 'fastas/some_name.fasta'    # location of fasta file between '' - absolute or relative path possible
-IS_COMPLEX = True                             # True or False
+FASTA_FILE = 'fastas/test.fasta'    # location of fasta file between '' - absolute or relative path possible
+IS_COMPLEX = False                             # True or False
 MSA_MODE = 'mmseqs2_server'                   # 'alphafold_default' or 'mmseqs2_server'
-SAVE_DIR = 'results/some_directory'                # location of results directory between '' - abs or rel path possible
+SAVE_DIR = 'results/test_runs'                # location of results directory between '' - abs or rel path possible
 DO_RELAX = 'best'                             # 'all', 'best' or 'none'
 USE_TEMPLATES = True                          # True, False
 MAX_RECYCLES = 3                              # default == 3
@@ -28,6 +28,7 @@ def submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, 
                 fasta_d[prot_id] = seq
                 seq = ''
             prot_id = f'{ctr}_{line.rstrip().lstrip(">")}'
+            if '|' in prot_id: prot_id = prot_id.split('|')[1]
             ctr+=1
         elif line:
             seq += line.rstrip()
@@ -49,18 +50,17 @@ def submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, 
 
         for prot_id, seq in all_seqs.items():
             script_content = f'''#!/bin/bash
-#PBS -N test_VIBFold_{prot_id}
+#PBS -N VIBFold_{prot_id}
 #PBS -l nodes=1:ppn={12 if cluster=='accelgor' else 8},gpus=1
 #PBS -l mem={125 if cluster=='accelgor' else 64}g
 #PBS -l walltime=48:00:00
 
-module load Python/3.8.6-GCCcore-10.2.0
+module load Python/3.9.5-GCCcore-10.3.0
 
-{'module load tqdm/4.56.2-GCCcore-10.2.0' if cluster == 'accelgor' else 
-'module load tqdm/4.60.0-GCCcore-10.2.0'}
-module load matplotlib/3.3.3-fosscuda-2020b
-module load AlphaFold/2.1.1-fosscuda-2020b
-export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20211201
+module load tqdm/4.61.2-GCCcore-10.3.0
+module load matplotlib/3.4.2-foss-2021a
+module load AlphaFold/2.2.2-foss-2021a-CUDA-11.3.1
+export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20220701
 
 PROTEIN={prot_id}
 
