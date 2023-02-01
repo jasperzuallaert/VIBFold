@@ -1,3 +1,5 @@
+import glob
+import math
 import os
 import numpy as np
 from matplotlib import pyplot as plt
@@ -8,7 +10,9 @@ def get_pae_plddt(model_names):
     out = {}
     for i,name in enumerate(model_names):
         d = pickle.load(open(name,'rb'))
-        out[f'model_{i+1}'] = {'plddt': d['plddt'], 'pae':d['predicted_aligned_error']}
+        basename = os.path.basename(name)
+        basename = basename[basename.index('model'):]
+        out[f'{basename}'] = {'plddt': d['plddt'], 'pae':d['predicted_aligned_error']}
     return out
 
 def generate_output_images(feature_dict, out_dir, name, pae_plddt_per_model):
@@ -39,7 +43,6 @@ def generate_output_images(feature_dict, out_dir, name, pae_plddt_per_model):
     plt.title("Predicted LDDT per position")
     for model_name, value in pae_plddt_per_model.items():
         plt.plot(value["plddt"], label=model_name)
-    plt.legend()
     plt.ylim(0, 100)
     plt.ylabel("Predicted LDDT")
     plt.xlabel("Positions")
@@ -47,13 +50,15 @@ def generate_output_images(feature_dict, out_dir, name, pae_plddt_per_model):
     ##################################################################
 
     ##################################################################
-    num_models = 5
-    plt.figure(figsize=(3 * num_models, 2), dpi=100)
+    num_models = 5 # columns
+    num_runs_per_model = math.ceil(len(model_names)/num_models)
+    fig = plt.figure(figsize=(3 * num_models, 2 * num_runs_per_model), dpi=100)
     for n, (model_name, value) in enumerate(pae_plddt_per_model.items()):
-        plt.subplot(1, num_models, n + 1)
+        plt.subplot(num_runs_per_model, num_models, n + 1)
         plt.title(model_name)
         plt.imshow(value["pae"], label=model_name, cmap="bwr", vmin=0, vmax=30)
         plt.colorbar()
+    fig.tight_layout()
     plt.savefig(f"{out_dir}/{name+('_' if name else '')}PAE.png")
     ##################################################################
 
@@ -65,11 +70,8 @@ parser.add_argument('--output_dir',dest='output_dir')
 parser.set_defaults(output_dir='')
 args = parser.parse_args()
 
-# print(os.listdir(args.input_dir))
 feature_dict = pickle.load(open(f'{args.input_dir}/features.pkl','rb'))
-is_multimer = ('result_model_1_multimer.pkl' in [os.path.basename(f) for f in os.listdir(path=args.input_dir)])
-is_ptm = ('result_model_1_ptm.pkl' in [os.path.basename(f) for f in os.listdir(path=args.input_dir)])
-model_names = [f'{args.input_dir}/result_model_{f}{"_multimer" if is_multimer else "_ptm" if is_ptm else ""}.pkl' for f in range(1,6)]
+model_names = sorted(glob.glob(f'{args.input_dir}/result_*.pkl'))
 
 pae_plddt_per_model = get_pae_plddt(model_names)
 generate_output_images(feature_dict, args.output_dir if args.output_dir else args.input_dir, args.name, pae_plddt_per_model)
