@@ -128,7 +128,10 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         logger.info('Generating output images...')
         generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], out_dir, jobname)
         # remove intermediate directories
-        os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else ""}/')
+        if msa_mode.startswith('mmseqs2'):
+            os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else ""}/')
+        else:
+            os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else "all"}/')
         logger.info(f'Permutation {perm_idx} finished!')
 
 # Loads the models, and compiles them. Weights are loaded, but only at prediction time added to the model.
