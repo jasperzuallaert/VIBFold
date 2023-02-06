@@ -103,13 +103,8 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         logger.info('Starting MSA search (+ templates if req)')
         feature_dict = run_msa_search(msa_mode, query_sequences, fasta_file, seq_to_msa_d, use_templates, out_dir, jobname, logger)
 
-        pickle.dump(feature_dict,file=open(out_dir+'/features_for_debugging.pkl','wb'))
-        # print('>>> feature_dict: ') ## TMP
-        # for k,v in feature_dict.items():
-        #     try:
-        #         print('>>>>>',k,v.shape)
-        #     except AttributeError:
-        #         print('>>>>>',k)
+        #pickle.dump(feature_dict,file=open(out_dir+'/features_for_debugging.pkl','wb'))
+        
         if use_templates:
             try:
                 log_template_info(feature_dict, logger)
@@ -133,7 +128,7 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         logger.info('Generating output images...')
         generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], out_dir, jobname)
         # remove intermediate directories
-        os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else "all"}/')
+        os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else ""}/')
         logger.info(f'Permutation {perm_idx} finished!')
 
 # Loads the models, and compiles them. Weights are loaded, but only at prediction time added to the model.
