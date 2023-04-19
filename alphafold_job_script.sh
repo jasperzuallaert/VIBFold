@@ -6,8 +6,8 @@
 
 PROTEIN=rbd
 
-module load AlphaFold/2.2.2-foss-2021a-CUDA-11.3.1
-export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20220701
+module load AlphaFold/2.3.1-foss-2022a-CUDA-11.7.0
+export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20230310
 
 WORKDIR=$VSC_DATA/alphafold/runs/$PBS_JOBID-$PROTEIN
 mkdir -p $WORKDIR
@@ -16,7 +16,7 @@ cd $WORKDIR
 
 echo Running $PROTEIN.fasta, output found at $WORKDIR
 alphafold --fasta_paths=$PROTEIN.fasta \
-          --max_template_date=2020-05-14 \
+          --max_template_date=2999-01-01 \
           --db_preset=full_dbs \
           --output_dir=$PWD \
           --model_preset=monomer_ptm

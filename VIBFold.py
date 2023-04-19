@@ -2,32 +2,23 @@ import argparse
 import itertools
 import re
 import logging
-import dataclasses
-import json
-import copy
 from alphafold.model import data as alpha_data, config as alpha_config
 from alphafold.common import protein as alpha_protein
 from alphafold.relax import relax
 from alphafold.model import model as alpha_model
 from random import randint
 from alphafold.data import templates as alpha_templates
-from alphafold.data import feature_processing, msa_pairing, msa_identifiers
 from alphafold.data.tools import hhsearch
 from alphafold.data.tools import hmmsearch
 from alphafold.data import pipeline as alpha_pipeline
 from alphafold.data import templates
-from alphafold.data import parsers
 from alphafold.common import residue_constants
-from alphafold.data import pipeline_multimer
 import numpy as np
 from matplotlib import pyplot as plt
 import alphafold
 import os
 import shutil
 import VIBFold_adapted_functions as adapted
-import pickle
-
-r = randint(0,100000)
 
 ALPHAFOLD_DATA_DIR = os.environ['ALPHAFOLD_DATA_DIR']
 MAX_TEMPLATE_HITS = 20 # default alphafold setting
@@ -41,16 +32,16 @@ hmmbuild_binary_path=shutil.which('hmmbuild')
 hhsearch_binary_path=shutil.which('hhsearch')
 kalign_binary_path=shutil.which('kalign')
 uniref90_database_path=ALPHAFOLD_DATA_DIR + '/uniref90/uniref90.fasta'
-mgnify_database_path=ALPHAFOLD_DATA_DIR + '/mgnify/mgy_clusters_2018_12.fa'
+mgnify_database_path=ALPHAFOLD_DATA_DIR + '/mgnify/mgy_clusters_2022_05.fa'
 bfd_database_path=ALPHAFOLD_DATA_DIR + '/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt'
 template_mmcif_dir=ALPHAFOLD_DATA_DIR + '/pdb_mmcif/mmcif_files'
 obsolete_pdbs_path=ALPHAFOLD_DATA_DIR + '/pdb_mmcif/obsolete.dat'
-uniclust30_database_path=ALPHAFOLD_DATA_DIR + '/uniclust30/uniclust30_2018_08/uniclust30_2018_08'
+uniref30_database_path= ALPHAFOLD_DATA_DIR + '/uniref30/UniRef30_2021_03'
 pdb70_database_path=ALPHAFOLD_DATA_DIR + '/pdb70/pdb70'
 pdb_seqres_database_path=ALPHAFOLD_DATA_DIR + '/pdb_seqres/pdb_seqres.txt'
 uniprot_database_path = ALPHAFOLD_DATA_DIR + '/uniprot/uniprot.fasta' # for multimer
 
-def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_relax, max_recycles=3, tolerance=0, msa_mode='alphafold_default'):
+def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, num_runs_per_model, do_relax, max_recycles=3, tolerance=0, msa_mode='alphafold_default'):
     # process input parameters
     sequences = seq.split(':')
     jobname = "".join(jobname.split())
@@ -58,8 +49,12 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
     use_env = True if msa_mode.startswith('mmseqs2') else False
     model_used = 'monomer_ptm' if len(sequences) == 1 else 'multimer'
     # Load model parameters, same for all permutations
-    model_params, model_runner_12, model_runner_345 = prepare_models(model_used, max_recycles, tolerance)
-
+    model_params, model_runners_12, model_runners_345 = [], [], []
+    for _ in range(num_runs_per_model):
+        model_param, model_runner_12, model_runner_345 = prepare_models(model_used, max_recycles, tolerance)
+        model_params.append(model_param)
+        model_runners_12.append(model_runner_12)
+        model_runners_345.append(model_runner_345)
     seq_to_msa_d = {}
     # if multiple sequences are present in the query, a single run is done for each of the permutations
     # Protein complexes with 'first A then B', will yield different results than 'first B then A'
@@ -89,6 +84,7 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         logger.info(f'Parameters: use_templates = {use_templates}')
         logger.info(f'Parameters: max_recycles = {max_recycles}')
         logger.info(f'Parameters: recycling_tolerance = {tolerance}')
+        logger.info(f'Parameters: num_runs_per_model = {num_runs_per_model}')
         logger.info(f'Started permutation # {perm_idx}')
         print(f'Parameters: num_sequences = {len(query_sequences)}')
         print(f'Parameters: model used = {model_used}')
@@ -97,14 +93,14 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
         print(f'Parameters: use_templates = {use_templates}')
         print(f'Parameters: max_recycles = {max_recycles}')
         print(f'Parameters: recycling_tolerance = {tolerance}')
+        print(f'Parameters: num_runs_per_model = {num_runs_per_model}')
         print(f'Started permutation # {perm_idx}')
 
         # Do MSA search
         logger.info('Starting MSA search (+ templates if req)')
         feature_dict = run_msa_search(msa_mode, query_sequences, fasta_file, seq_to_msa_d, use_templates, out_dir, jobname, logger)
 
-        #pickle.dump(feature_dict,file=open(out_dir+'/features_for_debugging.pkl','wb'))
-        
+        # pickle.dump(feature_dict,file=open(out_dir+'/features_for_debugging.pkl','wb'))
         if use_templates:
             try:
                 log_template_info(feature_dict, logger)
@@ -115,18 +111,20 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
             logger.info('No templates used.')
         # Predict
         logger.info('Starting predictions...')
-        unrelaxed_pdb_lines, unrelaxed_proteins, paes, plddts, ptms, iptms = predict_structures(logger,
+
+        unrelaxed_pdb_lines, unrelaxed_proteins, paes, plddts, ptms, iptms, model_names = predict_structures(logger,
                                                                                                   model_params,
-                                                                                                  model_runner_12,
-                                                                                                  model_runner_345,
+                                                                                                  model_runners_12,
+                                                                                                  model_runners_345,
                                                                                                   feature_dict,
-                                                                                                  model_used == 'multimer')
+                                                                                                  model_used == 'multimer',
+                                                                                                  num_runs_per_model)
         # rank models, relax, write pdb files
-        pae_plddt_per_model = rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, paes, ptms, iptms, out_dir, jobname, do_relax, model_used=='multimer')
+        pae_plddt_per_model = rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, paes, ptms, iptms, out_dir, jobname, do_relax, model_names, model_used=='multimer')
         # generate output images
 
         logger.info('Generating output images...')
-        generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], out_dir, jobname)
+        generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], num_runs_per_model, out_dir, jobname)
         # remove intermediate directories
         if msa_mode.startswith('mmseqs2'):
             os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else ""}/')
@@ -139,7 +137,7 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, do_rel
 def prepare_models(model_used, max_recycles, tolerance):
     model_params = {}
     model_runner_12, model_runner_345 = None, None
-    model_extension = 'ptm' if model_used == 'monomer_ptm' else 'multimer_v2'
+    model_extension = 'ptm' if model_used == 'monomer_ptm' else 'multimer_v3'
     for model_num in range(1,6):
         model_name = f'model_{model_num}_{model_extension}'
         model_params[model_name] = alpha_data.get_model_haiku_params(model_name=model_name, data_dir=ALPHAFOLD_DATA_DIR)
@@ -176,7 +174,7 @@ def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_tem
             uniref90_database_path=uniref90_database_path,
             mgnify_database_path=mgnify_database_path,
             bfd_database_path=bfd_database_path,
-            uniclust30_database_path=uniclust30_database_path,
+            uniref30_database_path=uniref30_database_path,
             small_bfd_database_path=None,
             template_searcher=template_searcher,
             template_featurizer=template_featurizer,
@@ -195,11 +193,7 @@ def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_tem
         msa_dir = f'{out_dir}/{jobname}_seq_all'
         if not os.path.exists(msa_dir): os.mkdir(msa_dir)
         feature_dict = data_pipeline.process(input_fasta_path=query_fasta, msa_output_dir=msa_dir)
-        # if not use_templates:
-        #     for key in list(feature_dict.keys()):
-        #         if key.startswith('template_'):
-        #             del feature_dict[key]
-        #     feature_dict.update(mk_placeholder_template(1, sum(len(x) for x in query_sequences)))
+
         return feature_dict
     elif msa_type == 'mmseqs2_server':
         if run_multimer_system:
@@ -327,33 +321,41 @@ def mk_placeholder_template(num_templates_, num_res_):
 # - predicted structure (unrelaxed) as an object
 # - predicted alignment error (PAE)
 # - predicted local distance difference test (LDDT)
-def predict_structures(logger, model_params, model_runner_12, model_runner_345, feature_dict, is_multimer):
+def predict_structures(logger, all_model_params, all_model_runners_12, all_model_runners_345, feature_dict, is_multimer, num_runs_per_model):
     plddts, paes, ptms, iptms = [], [], [], []
+    model_names = []
     unrelaxed_pdb_lines = []
     unrelaxed_proteins = []
-    for model_name, params in model_params.items():
-        logger.info(f'running {model_name}')
-        # swap params to avoid recompiling
-        # note: models 1,2 have diff number of params compared to models 3,4,5
-        if any(str(m) in model_name for m in [1, 2]): model_runner = model_runner_12
-        if any(str(m) in model_name for m in [3, 4, 5]): model_runner = model_runner_345
-        model_runner.params = params
-        processed_feature_dict = model_runner.process_features(feature_dict, random_seed=r)
-        prediction_result = model_runner.predict(processed_feature_dict,random_seed=r)
-        if 'predicted_aligned_error' in prediction_result: paes.append(prediction_result['predicted_aligned_error'])
-        if 'plddt' in prediction_result: plddts.append(prediction_result['plddt'])
-        if 'ptm' in prediction_result: ptms.append(prediction_result['ptm'])
-        if 'iptm' in prediction_result: iptms.append(prediction_result['iptm'])
-        final_atom_mask = prediction_result["structure_module"]["final_atom_mask"]
-        b_factors = prediction_result["plddt"][:, None] * final_atom_mask
+    for k in range(num_runs_per_model):
+        model_runner_12 = all_model_runners_12[k]
+        model_runner_345 = all_model_runners_345[k]
+        model_params = all_model_params[k]
+        for model_name, params in model_params.items():
+            logger.info(f'running {model_name}')
+            # swap params to avoid recompiling
+            # note: models 1,2 have diff number of params compared to models 3,4,5
+            if any(str(m) in model_name for m in [1, 2]): model_runner = model_runner_12
+            if any(str(m) in model_name for m in [3, 4, 5]): model_runner = model_runner_345
+            model_runner.params = params
+            r = randint(0, 100000)
+            processed_feature_dict = model_runner.process_features(feature_dict, random_seed=r)
+            r = randint(0, 100000)
+            prediction_result = model_runner.predict(processed_feature_dict,random_seed=r)
+            if 'predicted_aligned_error' in prediction_result: paes.append(prediction_result['predicted_aligned_error'])
+            if 'plddt' in prediction_result: plddts.append(prediction_result['plddt'])
+            if 'ptm' in prediction_result: ptms.append(prediction_result['ptm'])
+            if 'iptm' in prediction_result: iptms.append(prediction_result['iptm'])
+            final_atom_mask = prediction_result["structure_module"]["final_atom_mask"]
+            b_factors = prediction_result["plddt"][:, None] * final_atom_mask
 
-        unrelaxed_protein = alpha_protein.from_prediction(processed_feature_dict, prediction_result, b_factors, remove_leading_feature_dimension = not is_multimer)
-        unrelaxed_pdb_lines.append(alpha_protein.to_pdb(unrelaxed_protein))
-        unrelaxed_proteins.append(unrelaxed_protein)
-    return unrelaxed_pdb_lines, unrelaxed_proteins, paes, plddts, ptms, iptms
+            unrelaxed_protein = alpha_protein.from_prediction(processed_feature_dict, prediction_result, b_factors, remove_leading_feature_dimension = not is_multimer)
+            unrelaxed_pdb_lines.append(alpha_protein.to_pdb(unrelaxed_protein))
+            unrelaxed_proteins.append(unrelaxed_protein)
+            model_names.append(f'{model_name}x{k+1}')
+    return unrelaxed_pdb_lines, unrelaxed_proteins, paes, plddts, ptms, iptms, model_names
 
 # Rerank based on pLDDT, relax best model if desired, and write pdb files
-def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, paes, ptms, iptms, out_dir, jobname, do_relax, is_multimer):
+def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, paes, ptms, iptms, out_dir, jobname, do_relax, model_names, is_multimer):
     logger.info(f'Reranking based on {"pLDDT" if not is_multimer else "0.2*PTM+0.8*iPTM"}...')
     if iptms: ptms = [0.2*_ptm+0.8*_iptm for _ptm, _iptm in zip(ptms, iptms)]
     if is_multimer:
@@ -362,28 +364,28 @@ def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, pa
         rank = np.mean(plddts, -1).argsort()[::-1]
     plddt_pae_per_model = {}
     for n, r in enumerate(rank):
-        logger.info(f"model_{n + 1} plddt={np.mean(plddts[r]):2.3f}, ptm={ptms[r]:2.3f}")
-        unrelaxed_pdb_path = f'{out_dir}/{jobname}_unrelaxed_model_{n + 1}.pdb'
+        logger.info(f"rank_{n+1}_{model_names[r]} plddt={np.mean(plddts[r]):2.3f}, ptm={ptms[r]:2.3f}")
+        unrelaxed_pdb_path = f'{out_dir}/{jobname}_unrelaxed_rank_{n+1:02d}_{model_names[r]}.pdb' if len(model_names)>9 else f'{out_dir}/{jobname}_unrelaxed_rank_{n+1}_{model_names[r]}.pdb'
         with open(unrelaxed_pdb_path, 'w') as f:
             f.write(unrelaxed_pdb_lines[r])
         if (do_relax == 'best' and n == 0) or (do_relax == 'all'):
             try:
                 amber_relaxer = relax.AmberRelaxation(max_iterations=0, tolerance=2.39, stiffness=10.0, exclude_residues=[], max_outer_iterations=20, use_gpu=True)
                 relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_proteins[r])
-                relaxed_pdb_path = f'{out_dir}/{jobname}_relaxed_model_{n + 1}.pdb'
+                relaxed_pdb_path = f'{out_dir}/{jobname}_relaxed_rank_{n+1:02d}_{model_names[r]}.pdb' if len(model_names)>9 else f'{out_dir}/{jobname}_relaxed_rank_{n+1}_{model_names[r]}.pdb'
                 with open(relaxed_pdb_path, 'w') as f:
                     f.write(relaxed_pdb_str)
             except ValueError:
                 print('Error during relaxation - skipped!')
                 logger.info('Error during relaxation - skipped!')
-        plddt_pae_per_model[f"model_{n + 1}"] = {"plddt": plddts[r], "pae": paes[r]}
+        plddt_pae_per_model[f"rank_{n+1}_{model_names[r]}"] = {"plddt": plddts[r], "pae": paes[r]}
     return plddt_pae_per_model
 
 # Generates images, with beautiful visualizations of:
 # - the MSA
 # - the pLDDT per model
 # - the PAE per model
-def generate_output_images(seqs, pae_plddt_per_model, msa, out_dir, jobname):
+def generate_output_images(seqs, pae_plddt_per_model, msa, num_runs_per_model, out_dir, jobname):
     # gather MSA info
     if len(seqs) > 1:
         seq = ''.join(seqs)
@@ -418,7 +420,6 @@ def generate_output_images(seqs, pae_plddt_per_model, msa, out_dir, jobname):
     plt.title("Predicted LDDT per position")
     for model_name, value in pae_plddt_per_model.items():
         plt.plot(value["plddt"], label=model_name)
-    plt.legend()
     plt.ylim(0, 100)
     plt.ylabel("Predicted LDDT")
     plt.xlabel("Positions")
@@ -427,12 +428,13 @@ def generate_output_images(seqs, pae_plddt_per_model, msa, out_dir, jobname):
 
     ##################################################################
     num_models = 5
-    plt.figure(figsize=(3 * num_models, 2), dpi=100)
+    fig = plt.figure(figsize=(3 * num_models, 2*num_runs_per_model), dpi=100)
     for n, (model_name, value) in enumerate(pae_plddt_per_model.items()):
-        plt.subplot(1, num_models, n + 1)
+        plt.subplot(num_runs_per_model, num_models, n + 1)
         plt.title(model_name)
         plt.imshow(value["pae"], label=model_name, cmap="bwr", vmin=0, vmax=30)
         plt.colorbar()
+    fig.tight_layout()
     plt.savefig(f"{out_dir}/{jobname}_PAE.png")
     ##################################################################
 
@@ -494,6 +496,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_recycles',type=int,default=3,help='the maximum number of recycles',required=False)
     parser.add_argument('--tolerance',type=int,default=0,help='the tolerance level, decides when recycling stops',required=False)
     parser.add_argument('--do_relax',dest='do_relax',required=True)
+    parser.add_argument('--num_runs_per_model',type=int,dest='num_runs_per_model',required=False,default=1)
     parser.add_argument('--no_templates',dest='use_templates',action='store_false')
     parser.set_defaults(use_templates=True)
     parser.add_argument('--msa_mode',type=str,default='mmseqs2_server',help='choose one of "mmseqs2_server", "mmseqs2_local", "alphafold_default", "single_sequence"',required=False)
@@ -504,6 +507,7 @@ if __name__ == "__main__":
                                    max_recycles=args.max_recycles,
                                    tolerance=args.tolerance,
                                    use_templates=args.use_templates,
+                                   num_runs_per_model=args.num_runs_per_model,
                                    do_relax=args.do_relax,
                                    msa_mode=args.msa_mode)
     print('Finished run!')
