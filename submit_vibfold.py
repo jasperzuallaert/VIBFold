@@ -1,10 +1,10 @@
 
-FASTA_FILE = 'fastas/test.fasta'        # location of fasta file between '' - absolute or relative path possible
-IS_COMPLEX = False                       # True or False
-MSA_MODE = 'alphafold_default'             # 'alphafold_default' or 'mmseqs2_server'
-SAVE_DIR = 'results/test_runs'               # location of results directory between '' - abs or rel path possible
+FASTA_FILE = 'fastas/NAME.fasta'        # location of fasta file between '' - absolute or relative path possible
+IS_COMPLEX = True                       # True or False
+MSA_MODE = 'mmseqs2_server'             # 'alphafold_default' or 'mmseqs2_server'
+SAVE_DIR = 'results/trim32_practical'               # location of results directory between '' - abs or rel path possible
 DO_RELAX = 'best'                       # 'all', 'best' or 'none'
-NUM_RUNS_PER_MODEL = 5                  # number of runs per model, with different random seed
+NUM_RUNS_PER_MODEL = 1                  # number of runs per model, with different random seed
 USE_TEMPLATES = True                   # True, False
 MAX_RECYCLES = 3                        # default == 3
 
