@@ -89,7 +89,7 @@ python VIBFold.py \
             print()
             print(f'############# submitting {prot_id} #############')
             subprocess.Popen(['echo',f'{prot_id}'],shell=False)
-            subprocess.Popen(['qsub',f'{scriptname}'],shell=False).wait()
+            subprocess.Popen(['qsub',f'{scriptname}','--pass=reservation=alphafold'],shell=False).wait()
             subprocess.Popen(['rm',f'{scriptname}'],shell=False).wait()
             print()
 
