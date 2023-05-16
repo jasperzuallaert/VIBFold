@@ -131,8 +131,6 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, num_ru
         else:
             os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else "all"}/')
         logger.info(f'Permutation {perm_idx} finished!')
-        print('LOOP STOPPED (time constraints for student practical, only one interaction permutation run)')
-        break ## TEMPORARY BREAK FOR STUDENT PRACTICAL
 
 # Loads the models, and compiles them. Weights are loaded, but only at prediction time added to the model.
 # There is distinction between model_1 and model_3, because 1-2 and 3-4-5 have a different number of parameters
