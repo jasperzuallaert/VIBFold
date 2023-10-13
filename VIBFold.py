@@ -16,10 +16,12 @@ from alphafold.common import residue_constants
 import numpy as np
 from matplotlib import pyplot as plt
 import alphafold
+import json
 import os
 import shutil
 import VIBFold_adapted_functions as adapted
 
+MAX_NUM_PERMUTATIONS = 6 # to limit computational time
 ALPHAFOLD_DATA_DIR = os.environ['ALPHAFOLD_DATA_DIR']
 MAX_TEMPLATE_HITS = 20 # default alphafold setting
 MAX_UNIREF_HITS = 10000
@@ -59,6 +61,8 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, num_ru
     # if multiple sequences are present in the query, a single run is done for each of the permutations
     # Protein complexes with 'first A then B', will yield different results than 'first B then A'
     for perm_idx, query_sequences in enumerate(set(itertools.permutations(sequences))):
+        if perm_idx >= MAX_NUM_PERMUTATIONS:
+            break
         # the output dir gets a permutation number if applicable
         out_dir = f'{save_dir}/{jobname}' if len(sequences) == 1 else f'{save_dir}/{jobname}_permutation{perm_idx}'
         out_dir = out_dir.rstrip('/')
@@ -379,6 +383,12 @@ def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, pa
                 print('Error during relaxation - skipped!')
                 logger.info('Error during relaxation - skipped!')
         plddt_pae_per_model[f"rank_{n+1}_{model_names[r]}"] = {"plddt": plddts[r], "pae": paes[r]}
+        # write json file
+        with open(f'{out_dir}/{jobname}_rank_{n+1}_{model_names[r]}.json', 'w') as f:
+            d = [{"predicted_aligned_error": [[float(x) for x in l] for l in paes[r]],
+                 "max_predicted_aligned_error": float(np.max(paes[r])),
+                 }]
+            json.dump(d, f)
     return plddt_pae_per_model
 
 # Generates images, with beautiful visualizations of:
