@@ -1,4 +1,3 @@
-
 MAIN_FASTA = 'fastas/first.fasta' # list of proteins, to interact with each of the proteins in CANDIDATES_FASTA
 CANDIDATES_FASTA = 'fastas/second.fasta' # list of proteins, to interact with each of the proteins in MAIN_FASTA
 
@@ -7,13 +6,14 @@ SAVE_DIR = 'results/debugging'                # location of results directory be
 DO_RELAX = 'best'                             # 'all', 'best' or 'none'
 USE_TEMPLATES = True                          # True, False
 MAX_RECYCLES = 3                              # default == 3
+NUM_RUNS_PER_MODEL = 5                  # number of runs per model, with different random seed
 
 # IS_COMPLEX = True # Fixed value, this is no longer considered
 
 import subprocess
 import os
 
-def submit(MAIN_FASTA, CANDIDATES_FASTA, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES):
+def submit(MAIN_FASTA, CANDIDATES_FASTA, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES, NUM_RUNS_PER_MODEL):
     assert ' ' not in MAIN_FASTA, 'The name of your FASTA files cannot contain any spaces'
     assert ' ' not in CANDIDATES_FASTA, 'The name of your FASTA files cannot contain any spaces'
     # automatically select accelgor/joltik based on output of 'ml'
@@ -82,7 +82,8 @@ python VIBFold.py \
  --do_relax {DO_RELAX} \
  {"--no_templates" if not USE_TEMPLATES else ""} \
  --msa_mode {MSA_MODE} \
- --max_recycles {MAX_RECYCLES}
+ --max_recycles {MAX_RECYCLES} \
+ --num_runs_per_model {NUM_RUNS_PER_MODEL}
 '''
 
             scriptname = 'submit_new.sh'
@@ -98,4 +99,4 @@ python VIBFold.py \
             print()
 
 if __name__ == "__main__":
-    submit(MAIN_FASTA, CANDIDATES_FASTA, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES)
+    submit(MAIN_FASTA, CANDIDATES_FASTA, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES, NUM_RUNS_PER_MODEL)

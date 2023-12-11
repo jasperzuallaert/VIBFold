@@ -384,11 +384,12 @@ def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, pa
                 logger.info('Error during relaxation - skipped!')
         plddt_pae_per_model[f"rank_{n+1}_{model_names[r]}"] = {"plddt": plddts[r], "pae": paes[r]}
         # write json file
-        with open(f'{out_dir}/{jobname}_rank_{n+1}_{model_names[r]}.json', 'w') as f:
-            d = [{"predicted_aligned_error": [[float(x) for x in l] for l in paes[r]],
-                 "max_predicted_aligned_error": float(np.max(paes[r])),
-                 }]
-            json.dump(d, f)
+        if n == 0:
+            with open(f'{out_dir}/{jobname}_rank_{n+1}_{model_names[r]}.json', 'w') as f:
+                d = [{"predicted_aligned_error": [[float(x) for x in l] for l in paes[r]],
+                     "max_predicted_aligned_error": float(np.max(paes[r])),
+                     }]
+                json.dump(d, f)
     return plddt_pae_per_model
 
 # Generates images, with beautiful visualizations of:
@@ -440,12 +441,21 @@ def generate_output_images(seqs, pae_plddt_per_model, msa, num_runs_per_model, o
     num_models = 5
     fig = plt.figure(figsize=(3 * num_models, 2*num_runs_per_model), dpi=100)
     for n, (model_name, value) in enumerate(pae_plddt_per_model.items()):
+        if n == 0:
+            best_pae = value["pae"]
+            best_name = model_name
         plt.subplot(num_runs_per_model, num_models, n + 1)
         plt.title(model_name)
         plt.imshow(value["pae"], label=model_name, cmap="bwr", vmin=0, vmax=30)
         plt.colorbar()
     fig.tight_layout()
     plt.savefig(f"{out_dir}/{jobname}_PAE.png")
+    #### single best PAE
+    fig = plt.figure(figsize=(3, 2), dpi=100)
+    plt.imshow(best_pae, label=best_name, cmap="bwr", vmin=0, vmax=30)
+    plt.colorbar()
+    fig.tight_layout()
+    plt.savefig(f"{out_dir}/best_PAE.png")
     ##################################################################
 
 # gets a list of sequences from the fasta file (one for monomer, multiple for multimer)

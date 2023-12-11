@@ -71,6 +71,9 @@ parser.set_defaults(output_dir='')
 args = parser.parse_args()
 
 feature_dict = pickle.load(open(f'{args.input_dir}/features.pkl','rb'))
+# is_multimer = ('result_model_1_multimer.pkl' in [os.path.basename(f) for f in os.listdir(path=args.input_dir)])
+# is_ptm = ('result_model_1_ptm.pkl' in [os.path.basename(f) for f in os.listdir(path=args.input_dir)])
+# model_names = [f'{args.input_dir}/result_model_{f}{"_multimer" if is_multimer else "_ptm" if is_ptm else ""}.pkl' for f in range(1,6)]
 model_names = sorted(glob.glob(f'{args.input_dir}/result_*.pkl'))
 
 pae_plddt_per_model = get_pae_plddt(model_names)
