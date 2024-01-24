@@ -49,12 +49,12 @@ def submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, 
     if not SAVE_DIR.startswith('/'):
         SAVE_DIR = f'$PBS_O_WORKDIR/{SAVE_DIR}'
 
-        for prot_id, seq in all_seqs.items():
-            script_content = f'''#!/bin/bash
-#PBS -N VIBFold_{prot_id}
-#PBS -l nodes=1:ppn={12 if cluster=='accelgor' else 8},gpus=1
-#PBS -l mem={125 if cluster=='accelgor' else 64}g
-#PBS -l walltime=48:00:00
+    for prot_id, seq in all_seqs.items():
+        script_content = f'''#!/bin/bash
+#PBS-N VIBFold_{prot_id}
+#PBS-l nodes=1:ppn={12 if cluster=='accelgor' else 8},gpus=1
+#PBS-l mem={125 if cluster=='accelgor' else 64}g
+#PBS-l walltime=48:00:00
 
 module load Python/3.10.4-GCCcore-11.3.0
 
@@ -81,17 +81,17 @@ python VIBFold.py \
  --max_recycles {MAX_RECYCLES}
 '''
 
-            scriptname = 'submit_new.sh'
-            f = open(scriptname,'w')
-            print(script_content,file=f)
-            f.close()
+        scriptname = 'submit_new.sh'
+        f = open(scriptname,'w')
+        print(script_content,file=f)
+        f.close()
 
-            print()
-            print(f'############# submitting {prot_id} #############')
-            subprocess.Popen(['echo',f'{prot_id}'],shell=False)
-            subprocess.Popen(['qsub',f'{scriptname}'],shell=False).wait()
-            subprocess.Popen(['rm',f'{scriptname}'],shell=False).wait()
-            print()
+        print()
+        print(f'############# submitting {prot_id} #############')
+        subprocess.Popen(['echo',f'{prot_id}'],shell=False)
+        subprocess.Popen(['qsub',f'{scriptname}'],shell=False).wait()
+        subprocess.Popen(['rm',f'{scriptname}'],shell=False).wait()
+        print()
 
 if __name__ == "__main__":
     submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES)
