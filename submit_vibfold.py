@@ -10,6 +10,7 @@ MAX_RECYCLES = 3                        # default == 3
 
 import subprocess
 import os
+import sys
 
 def submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES):
     assert ' ' not in FASTA_FILE, 'The name of your FASTA file cannot contain any spaces'
@@ -19,6 +20,17 @@ def submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, 
               'joltik' if 'joltik' in module_info else ''
     if not cluster:
         raise NotImplementedError('Cluster joltik/accelgor not found in "ml" output. Did you use "module swap cluster/joltik" (or other)?')
+
+    if not os.path.exists(FASTA_FILE):
+        sys.exit(f"FASTA_FILE '{FASTA_FILE}' not found")
+
+    msa_modes = ['alphafold_default', 'mmseqs2_server']
+    if MSA_MODE not in msa_modes:
+        sys.exit(f"Only 'alphafold_default' or 'mmseqs2_server' allowed as MSA_MODE, got '{MSA_MODE}'")
+
+    relax = ['all', 'best', 'none']
+    if DO_RELAX not in relax:
+        sys.exit(f"Only 'all', 'best' or 'none' allowed for DO_RELAX, got '{DO_RELAX}'")
 
     fasta_d = {}
     seq = ''
@@ -95,3 +107,4 @@ python VIBFold.py \
 
 if __name__ == "__main__":
     submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES)
+    sys.exit(0)
