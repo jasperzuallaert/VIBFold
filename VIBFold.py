@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import VIBFold_adapted_functions as adapted
+from matplotlib.colors import ListedColormap
 
 MAX_NUM_PERMUTATIONS = 6 # to limit computational time
 ALPHAFOLD_DATA_DIR = os.environ['ALPHAFOLD_DATA_DIR']
@@ -43,9 +44,11 @@ pdb70_database_path=ALPHAFOLD_DATA_DIR + '/pdb70/pdb70'
 pdb_seqres_database_path=ALPHAFOLD_DATA_DIR + '/pdb_seqres/pdb_seqres.txt'
 uniprot_database_path = ALPHAFOLD_DATA_DIR + '/uniprot/uniprot.fasta' # for multimer
 
-def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, num_runs_per_model, do_relax, max_recycles=3, tolerance=0, msa_mode='alphafold_default'):
+def run_alphafold_advanced_complex(seq, prot_names, jobname, save_dir, use_templates, num_runs_per_model, do_relax, max_recycles=3, tolerance=0, msa_mode='alphafold_default', do_gather_best=False):
     # process input parameters
     sequences = seq.split(':')
+    prot_names = [name[:20] for name in prot_names.split(':')]
+    seq_idx = list(range(len(sequences)))
     jobname = "".join(jobname.split())
     jobname = re.sub(r'\W+', '', jobname)
     use_env = True if msa_mode.startswith('mmseqs2') else False
@@ -60,9 +63,11 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, num_ru
     seq_to_msa_d = {}
     # if multiple sequences are present in the query, a single run is done for each of the permutations
     # Protein complexes with 'first A then B', will yield different results than 'first B then A'
-    for perm_idx, query_sequences in enumerate(set(itertools.permutations(sequences))):
+    for perm_idx, indices in enumerate(set(itertools.permutations(seq_idx))):
         if perm_idx >= MAX_NUM_PERMUTATIONS:
             break
+        query_sequences = [sequences[i] for i in indices]
+        query_prot_names = [prot_names[i] for i in indices]
         # the output dir gets a permutation number if applicable
         out_dir = f'{save_dir}/{jobname}' if len(sequences) == 1 else f'{save_dir}/{jobname}_permutation{perm_idx}'
         out_dir = out_dir.rstrip('/')
@@ -128,13 +133,17 @@ def run_alphafold_advanced_complex(seq, jobname, save_dir, use_templates, num_ru
         # generate output images
 
         logger.info('Generating output images...')
-        generate_output_images(query_sequences, pae_plddt_per_model, feature_dict['msa'], num_runs_per_model, out_dir, jobname)
+        generate_output_images(query_sequences, query_prot_names, pae_plddt_per_model, feature_dict['msa'], num_runs_per_model, out_dir, jobname)
         # remove intermediate directories
         if msa_mode.startswith('mmseqs2'):
             os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else ""}/')
         else:
             os.popen(f'rm -rf {out_dir}/{jobname}_*{"env" if use_env else "all"}/')
         logger.info(f'Permutation {perm_idx} finished!')
+    # gather best prediction
+    logger.info('Gathering best prediction...')
+    if do_gather_best:
+        gather_best_prediction(save_dir, jobname, len(sequences) > 1)
 
 # Loads the models, and compiles them. Weights are loaded, but only at prediction time added to the model.
 # There is distinction between model_1 and model_3, because 1-2 and 3-4-5 have a different number of parameters
@@ -211,9 +220,11 @@ def run_msa_search(msa_type, query_sequences, query_fasta, seq_to_msa_d, use_tem
                     if template_path:
                         try:
                             tt = mk_template(query_sequence, a3m_lines_unpaired, template_path, logger)
-                        except RuntimeError:
+                        except RuntimeError as ex:
                             print(f'Error in template construction for {template_path}')
+                            print(ex)
                             logger.info(f'Error in template construction for {template_path}')
+                            logger.info(ex)
                     if tt == None:
                         tt = mk_placeholder_template(1,len(query_sequence))
                     template_features.append(tt)
@@ -361,14 +372,15 @@ def predict_structures(logger, all_model_params, all_model_runners_12, all_model
 # Rerank based on pLDDT, relax best model if desired, and write pdb files
 def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, paes, ptms, iptms, out_dir, jobname, do_relax, model_names, is_multimer):
     logger.info(f'Reranking based on {"pLDDT" if not is_multimer else "0.2*PTM+0.8*iPTM"}...')
-    if iptms: ptms = [0.2*_ptm+0.8*_iptm for _ptm, _iptm in zip(ptms, iptms)]
+    combined = []
+    if iptms: combined = [0.2*_ptm+0.8*_iptm for _ptm, _iptm in zip(ptms, iptms)]
     if is_multimer:
         rank = np.asarray(ptms).argsort()[::-1]
     else:
         rank = np.mean(plddts, -1).argsort()[::-1]
     plddt_pae_per_model = {}
     for n, r in enumerate(rank):
-        logger.info(f"rank_{n+1}_{model_names[r]} plddt={np.mean(plddts[r]):2.3f}, ptm={ptms[r]:2.3f}")
+        logger.info(f"rank_{n+1}_{model_names[r]} plddt={np.mean(plddts[r]):2.3f}, ptm={ptms[r]:2.3f}" + (f", iptm={iptms[r]:2.3f}, 0.2ptm+0.8iptm={combined[r]:2.3f}" if iptms else ""))
         unrelaxed_pdb_path = f'{out_dir}/{jobname}_unrelaxed_rank_{n+1:02d}_{model_names[r]}.pdb' if len(model_names)>9 else f'{out_dir}/{jobname}_unrelaxed_rank_{n+1}_{model_names[r]}.pdb'
         with open(unrelaxed_pdb_path, 'w') as f:
             f.write(unrelaxed_pdb_lines[r])
@@ -382,7 +394,8 @@ def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, pa
             except ValueError:
                 print('Error during relaxation - skipped!')
                 logger.info('Error during relaxation - skipped!')
-        plddt_pae_per_model[f"rank_{n+1}_{model_names[r]}"] = {"plddt": plddts[r], "pae": paes[r]}
+        plddt_pae_per_model[f"rank_{n+1:0{len(str(len(rank)))}d}_{model_names[r]}"] = {"plddt": plddts[r], "ptm": ptms[r], "pae": paes[r]}
+        if iptms: plddt_pae_per_model[f"rank_{n+1:0{len(str(len(rank)))}d}_{model_names[r]}"].update({'iptm':iptms[r], '0.2ptm+0.8iptm':combined[r]})
         # write json file
         if n == 0:
             with open(f'{out_dir}/{jobname}_rank_{n+1}_{model_names[r]}.json', 'w') as f:
@@ -396,7 +409,7 @@ def rank_relax_write(logger, unrelaxed_pdb_lines, unrelaxed_proteins, plddts, pa
 # - the MSA
 # - the pLDDT per model
 # - the PAE per model
-def generate_output_images(seqs, pae_plddt_per_model, msa, num_runs_per_model, out_dir, jobname):
+def generate_output_images(seqs, query_prot_names, pae_plddt_per_model, msa, num_runs_per_model, out_dir, jobname):
     # gather MSA info
     if len(seqs) > 1:
         seq = ''.join(seqs)
@@ -440,7 +453,8 @@ def generate_output_images(seqs, pae_plddt_per_model, msa, num_runs_per_model, o
     ##################################################################
     num_models = 5
     fig = plt.figure(figsize=(3 * num_models, 2*num_runs_per_model), dpi=100)
-    for n, (model_name, value) in enumerate(pae_plddt_per_model.items()):
+    for n, model_name in enumerate(sorted(pae_plddt_per_model.keys())):
+        value = pae_plddt_per_model[model_name]
         if n == 0:
             best_pae = value["pae"]
             best_name = model_name
@@ -450,12 +464,55 @@ def generate_output_images(seqs, pae_plddt_per_model, msa, num_runs_per_model, o
         plt.colorbar()
     fig.tight_layout()
     plt.savefig(f"{out_dir}/{jobname}_PAE.png")
+
     #### single best PAE
-    fig = plt.figure(figsize=(3, 2), dpi=100)
+    print(f'best model: {best_name}')
+    plddt, ptm = np.mean(pae_plddt_per_model[best_name]["plddt"]), pae_plddt_per_model[best_name]["ptm"]
+    iptm = pae_plddt_per_model[best_name].get("iptm", -1)
+    fig = plt.figure(figsize=(6, 3), dpi=100)
+    plt.suptitle(f"{best_name}\npLDDT:{plddt:.2f} PTM:{ptm:.2f}"+(f" iPTM:{iptm:.2f}" if iptm != -1 else ""))
+
+    plt.subplot(1, 2, 1)
     plt.imshow(best_pae, label=best_name, cmap="bwr", vmin=0, vmax=30)
+    # draw lines on x and y according to the length of strings in seqs
+    for i in range(1, len(seqs)):
+        plt.axhline(len(''.join(seqs[:i])) + 0.5, color='black')
+        plt.axvline(len(''.join(seqs[:i])) + 0.5, color='black')
     plt.colorbar()
+
+    # add sequence labels in extra plot
+    plt.subplot(1, 2, 2)
+    new_np = np.zeros_like(best_pae)
+    colors = ['white',
+              '#FFDAB9',  # Peachpuff
+              '#ADD8E6',  # Light blue
+              '#FFD1DC',  # Pink
+              '#90EE90',  # Light green
+              '#FAFAD2',  # Light goldenrod yellow
+              '#FFECDB',  # Cream
+              '#E0FFFF',  # Light cyan
+              '#FFE4E1',  # Misty rose
+              '#F0FFF0',  # Honeydew
+              '#FFF0F5'  # Lavender blush
+              ][:len(seqs) + 1]
+
+    for i in range(len(seqs)):
+        before = len(''.join(seqs[:i]))
+        seqlen = len(seqs[i])
+        new_np[before:before + seqlen, before:before + seqlen] = i + 1
+        plt.text(before + seqlen / 2, before + seqlen / 2, query_prot_names[i], color='black', ha='center', va='center',
+                 fontsize=8)
+
+    for i in range(1, len(seqs)):
+        plt.axhline(len(''.join(seqs[:i])) + 0.5, color='black')
+        plt.axvline(len(''.join(seqs[:i])) + 0.5, color='black')
+
+    cmap = ListedColormap(colors)
+    plt.imshow(new_np, cmap=cmap)
+
     fig.tight_layout()
-    plt.savefig(f"{out_dir}/best_PAE.png")
+    iptm_str = f"_iptm{int(iptm*100):02d}" if iptm != -1 else ""
+    plt.savefig(f"{out_dir}/best_PAE_plddt{int(plddt):02d}_ptm{int(ptm*100):02d}{iptm_str}.png")
     ##################################################################
 
 # gets a list of sequences from the fasta file (one for monomer, multiple for multimer)
@@ -507,10 +564,42 @@ def log_template_info(feature_dict, logger):
             assert chain_id == chain_ids[to]
             logger.info(f' ({k+1}) At chain #{chain_id}, positions [{residue_idx[fro]}, {residue_idx[to]}]')
 
+def gather_best_prediction(run_dir, jobname, is_multimer):
+    best_pdb, best_plddt, best_ptm = None, -1, -1
+    rerank_by = 'ptm' if is_multimer else 'plddt'
+    for subdir in os.listdir(run_dir):
+        subdir = run_dir + '/' + subdir
+        plddt, ptm = -1, -1
+        for line in open(subdir + '/info.log'):
+            if 'Reranking' in line and 'PTM' in line:
+                rerank_by = 'ptm'
+            if 'plddt=' in line:
+                plddt = float(line.split('=')[1].split(',')[0])
+                ptm = float(line.split('=')[2].split(',')[0].rstrip())
+                break
+        files = [file for file in os.listdir(subdir) if '_relaxed' in file]
+        if not files:
+            files = [file for file in os.listdir(subdir) if '_unrelaxed' in file]
+        if files:
+            pdb_file = subdir.rstrip('/') + '/' + files[0]
+        else:
+            pdb_file = f'pdb file missing from {subdir}'
+        if (rerank_by == 'ptm' and ptm > best_ptm) or (rerank_by == 'plddt' and plddt > best_plddt):
+            best_pdb, best_plddt, best_ptm = pdb_file, plddt, ptm
+
+    best_directory = run_dir.rstrip('/') + f'/best_{jobname}/'
+    if not os.path.exists(best_directory):
+        os.mkdir(best_directory)
+    os.system(f'cp {best_pdb} {best_directory}')
+    os.system(f'cp {best_pdb[:best_pdb.rfind("/")]}/best_PAE*.png {best_directory}/')
+
 
 if __name__ == "__main__":
+    import sys
+    print(sys.argv)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--seq',help='the input sequence or sequences (in case of multiple, separate with ":"')
+    parser.add_argument('--seq',help='the input sequence or sequences (in case of multiple, separate with ":")')
+    parser.add_argument('--prot_names',help='the names of the proteins (in case of multiple, separate with ":")')
     parser.add_argument('--jobname',help='the name for the job, used for file naming')
     parser.add_argument('--save_dir',help='the location where new directories (per permutation) will be created')
     parser.add_argument('--max_recycles',type=int,default=3,help='the maximum number of recycles',required=False)
@@ -520,8 +609,11 @@ if __name__ == "__main__":
     parser.add_argument('--no_templates',dest='use_templates',action='store_false')
     parser.set_defaults(use_templates=True)
     parser.add_argument('--msa_mode',type=str,default='mmseqs2_server',help='choose one of "mmseqs2_server", "mmseqs2_local", "alphafold_default", "single_sequence"',required=False)
+    parser.add_argument('--do_gather_best',dest='do_gather_best',action='store_true')
+    parser.set_defaults(do_gather_best=False)
     args = parser.parse_args()
     run_alphafold_advanced_complex(seq=args.seq,
+                                   prot_names=args.prot_names,
                                    jobname=args.jobname,
                                    save_dir=args.save_dir,
                                    max_recycles=args.max_recycles,
@@ -529,5 +621,6 @@ if __name__ == "__main__":
                                    use_templates=args.use_templates,
                                    num_runs_per_model=args.num_runs_per_model,
                                    do_relax=args.do_relax,
-                                   msa_mode=args.msa_mode)
+                                   msa_mode=args.msa_mode,
+                                   do_gather_best=args.do_gather_best)
     print('Finished run!')

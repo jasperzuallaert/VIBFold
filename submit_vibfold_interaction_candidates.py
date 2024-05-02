@@ -1,9 +1,9 @@
-MAIN_FASTA = 'fastas/first.fasta' # list of proteins, to interact with each of the proteins in CANDIDATES_FASTA
-CANDIDATES_FASTA = 'fastas/second.fasta' # list of proteins, to interact with each of the proteins in MAIN_FASTA
+MAIN_FASTA = 'fastas/test_main.fasta' # list of proteins, to interact with each of the proteins in CANDIDATES_FASTA
+CANDIDATES_FASTA = 'fastas/test_candidates.fasta' # list of proteins, to interact with each of the proteins in MAIN_FASTA
 
-MSA_MODE = 'alphafold_default'                # 'alphafold_default' or 'mmseqs2_server'
-SAVE_DIR = 'results/debugging'                # location of results directory between '' - abs or rel path possible
-DO_RELAX = 'best'                             # 'all', 'best' or 'none'
+MSA_MODE = 'mmseqs2_server'                # 'alphafold_default' or 'mmseqs2_server'
+SAVE_DIR = 'results/test'                # location of results directory between '' - abs or rel path possible
+DO_RELAX = 'none'                             # 'all', 'best' or 'none'
 USE_TEMPLATES = True                          # True, False
 MAX_RECYCLES = 3                              # default == 3
 NUM_RUNS_PER_MODEL = 5                  # number of runs per model, with different random seed
@@ -12,6 +12,9 @@ NUM_RUNS_PER_MODEL = 5                  # number of runs per model, with differe
 
 import subprocess
 import os
+import time
+
+timestamp = time.strftime('%Y%m%d_%H%M%S') + '_'
 
 def submit(MAIN_FASTA, CANDIDATES_FASTA, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, MAX_RECYCLES, NUM_RUNS_PER_MODEL):
     assert ' ' not in MAIN_FASTA, 'The name of your FASTA files cannot contain any spaces'
@@ -32,7 +35,8 @@ def submit(MAIN_FASTA, CANDIDATES_FASTA, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPL
                 if seq:
                     fasta_d[prot_id] = seq
                     seq = ''
-                prot_id = f'{ctr}_{line.rstrip().lstrip(">")}'
+                prot_id = f'{ctr}_{line.rstrip().lstrip(">").replace(" ", "_").replace(":", "_").replace("(", "").replace(")", "")}'
+                if '|' in prot_id: prot_id = prot_id.split('|')[1]
                 ctr+=1
             elif line:
                 seq += line.rstrip()
@@ -46,16 +50,18 @@ def submit(MAIN_FASTA, CANDIDATES_FASTA, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPL
     all_interactions = {}
     for prot1_id, seq1 in proteins_1.items():
         for prot2_id, seq2 in proteins_2.items():
-            prot1_id = prot1_id.replace(' ', '_')
-            prot2_id = prot2_id.replace(' ', '_')
-            all_interactions[f'{prot1_id}_{prot2_id}'] = f'{seq1}:{seq2}'
+            prot1_id = prot1_id.replace(' ', '_').replace(':', '_').replace('(', '').replace(')', '')
+            prot2_id = prot2_id.replace(' ', '_').replace(':', '_').replace('(', '').replace(')', '')
+            prot_names = f'{prot1_id}:{prot2_id}'
+            all_interactions[prot_names] = f'{seq1}:{seq2}'
 
     if not SAVE_DIR.startswith('/'):
         SAVE_DIR = f'$PBS_O_WORKDIR/{SAVE_DIR}'
 
-        for prot_id, seq in all_interactions.items():
+        for prot_names, seq in all_interactions.items():
+            run_save_dir = f'{SAVE_DIR}/{timestamp}_{prot_names.replace(":", "_")}'
             script_content = f'''#!/bin/bash
-#PBS -N test_VIBFold_{prot_id}
+#PBS -N interactions_VIBFold_{prot_names.replace(":", "_")}
 #PBS -l nodes=1:ppn={12 if cluster=='accelgor' else 8},gpus=1
 #PBS -l mem={125 if cluster=='accelgor' else 64}g
 #PBS -l walltime=48:00:00
@@ -67,23 +73,25 @@ module load matplotlib/3.5.2-foss-2022a
 module load AlphaFold/2.3.1-foss-2022a-CUDA-11.7.0
 export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20230310
 
-PROTEIN={prot_id}
+PROTEIN={prot_names.replace(":", "_")}
 
 jobname="$PROTEIN"_"$PBS_JOBID"
 
-SAVEDIR={SAVE_DIR}
+SAVEDIR={run_save_dir}
 mkdir -p $SAVEDIR
 
 cd $PBS_O_WORKDIR
 python VIBFold.py \
  --seq {seq} \
+ --prot_names "{prot_names}" \
  --jobname $jobname \
  --save_dir $SAVEDIR \
  --do_relax {DO_RELAX} \
  {"--no_templates" if not USE_TEMPLATES else ""} \
  --msa_mode {MSA_MODE} \
  --max_recycles {MAX_RECYCLES} \
- --num_runs_per_model {NUM_RUNS_PER_MODEL}
+ --num_runs_per_model {NUM_RUNS_PER_MODEL} \
+ --do_gather_best
 '''
 
             scriptname = 'submit_new.sh'
@@ -92,8 +100,8 @@ python VIBFold.py \
             f.close()
 
             print()
-            print(f'############# submitting {prot_id} #############')
-            subprocess.Popen(['echo',f'{prot_id}'],shell=False)
+            print(f'############# submitting {prot_names.replace(":", "_")} #############')
+            subprocess.Popen(['echo',f'{prot_names.replace(":", "_")}'],shell=False)
             subprocess.Popen(['qsub',f'{scriptname}'],shell=False).wait()
             subprocess.Popen(['rm',f'{scriptname}'],shell=False).wait()
             print()
