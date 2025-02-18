@@ -65,11 +65,11 @@ def submit(FASTA_FILE, IS_COMPLEX, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPLATES, 
 #PBS -l mem={125 if cluster=='accelgor' else 64 if cluster=='joltik' else 20}g
 #PBS -l walltime=48:00:00
 
-module load Python/3.10.4-GCCcore-11.3.0
+module load Python/3.11.3-GCCcore-12.3.0
 
-module load tqdm/4.64.0-GCCcore-11.3.0
-module load matplotlib/3.5.2-foss-2022a
-module load AlphaFold/2.3.1-foss-2022a{"-CUDA-11.7.0" if cluster in ['accelgor','joltik'] else ""}
+module load tqdm/4.66.1-GCCcore-12.3.0 
+module load matplotlib/3.7.2-gfbf-2023a
+module load AlphaFold/2.3.2-foss-2023a{"-CUDA-12.1.1" if cluster in ['accelgor','joltik'] else ""}
 export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20230310
 PROTEIN={prot_id}
 
