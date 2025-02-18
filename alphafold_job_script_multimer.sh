@@ -6,7 +6,7 @@
 
 PROTEIN=SARSCOV2_VHH72
 
-module load AlphaFold/2.3.1-foss-2022a-CUDA-11.7.0
+module load AlphaFold/2.3.2-foss-2023a-CUDA-12.1.1
 export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20230310
 
 WORKDIR=$VSC_DATA/alphafold/runs/$PBS_JOBID-$PROTEIN
