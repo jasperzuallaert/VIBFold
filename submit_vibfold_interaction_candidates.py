@@ -62,15 +62,15 @@ def submit(MAIN_FASTA, CANDIDATES_FASTA, MSA_MODE, SAVE_DIR, DO_RELAX, USE_TEMPL
             run_save_dir = f'{SAVE_DIR}/{timestamp}_{prot_names.replace(":", "_")}'
             script_content = f'''#!/bin/bash
 #PBS -N interactions_VIBFold_{prot_names.replace(":", "_")}
-#PBS -l nodes=1:ppn={12 if cluster=='accelgor' else 8},gpus=1
-#PBS -l mem={125 if cluster=='accelgor' else 64}g
+#PBS -l nodes=1:ppn={12 if cluster in ['accelgor', 'litleo'] else 8}{",gpus=1" if cluster in ['accelgor','joltik'] else ""}
+#PBS -l mem={125 if cluster in ['accelgor', 'litleo'] else 64 if cluster=='joltik' else 20}g
 #PBS -l walltime=48:00:00
 
 module load Python/3.11.3-GCCcore-12.3.0
 
 module load tqdm/4.66.1-GCCcore-12.3.0 
 module load matplotlib/3.7.2-gfbf-2023a
-module load AlphaFold/2.3.2-foss-2023a-CUDA-12.1.1
+module load AlphaFold/2.3.2-foss-2023a{"-CUDA-12.1.1" if cluster in ['accelgor','joltik', 'litleo'] else ""}
 export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20230310
 
 PROTEIN={prot_names.replace(":", "_")}
