@@ -44,7 +44,7 @@ cat <<EOT > "$msa_job_script"
 #PBS -N msa_pulldown
 #PBS -l nodes=1:ppn=4
 #PBS -l walltime=12:00:00
-#PBS -l mem=32gb
+#PBS -l mem=80gb
 
 module load AlphaPulldown/2.0.3-foss-2023a
 export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20230310
