@@ -44,9 +44,9 @@ cat <<EOT > "$msa_job_script"
 #PBS -N msa_pulldown
 #PBS -l nodes=1:ppn=4
 #PBS -l walltime=12:00:00
-#PBS -l mem=64gb
+#PBS -l mem=32gb
 
-module load AlphaPulldown/2.0.0b4-foss-2022a
+module load AlphaPulldown/2.0.3-foss-2023a
 export ALPHAFOLD_DATA_DIR=/arcanine/scratch/gent/apps/AlphaFold/20230310
 cd $output_directory
 
@@ -70,7 +70,7 @@ echo "#####     STEP 1. MSA search     #####" >> $instr_file
 echo "######################################" >> $instr_file
 echo ">>> To launch the MSA search, run: " >> $instr_file
 echo "          module swap cluster/doduo" >> $instr_file
-echo "          qsub -m ae $msa_job_script -t1-$total_count -o $output_directory/output_msa.log -e $output_directory/output_msa.log" >> $instr_file
+echo "          qsub -m ae $msa_job_script -t1-$total_count -o $output_directory/output_msa.log -e $output_directory/error_msa.log" >> $instr_file
 echo ">>> Note that you can change the doduo cluster to any CPU cluster you wish" >> $instr_file
 echo ">>> Wait until all jobs have been successfully completed - you will receive an email when finished." >> $instr_file
 echo " " >> $instr_file
@@ -83,7 +83,7 @@ cat <<EOT > "$predict_job_script"
 #PBS -l mem=64g
 #PBS -l walltime=12:00:00
 
-module load AlphaPulldown/2.0.0b4-foss-2022a-CUDA-11.7.0
+module load AlphaPulldown/2.0.3-foss-2023a-CUDA-12.1.1
 
 cd $output_directory
 export EBROOTCOLABFOLD=\$PBS_O_WORKDIR/$output_directory
@@ -116,7 +116,7 @@ gather_results_script="${output_directory}/gather_results_script.sh"
 cat <<EOT > "$gather_results_script"
 #PBS -N gather_results_pulldown
 #PBS -l nodes=1:ppn=4
-#PBS -l walltime=6:00:00
+#PBS -l walltime=12:00:00
 #PBS -l mem=16gb
 
 cd $output_directory
