@@ -1,6 +1,6 @@
 #!/bin/bash
 #PBS -N Boltz_test
-#PBS -l nodes=1:ppn=8
+#PBS -l nodes=1:ppn=8:gpus=1
 #PBS -l mem=32gb
 #PBS -l walltime=6:0:0
 
