@@ -120,8 +120,8 @@ cat <<EOT > "$gather_results_script"
 #PBS -l mem=16gb
 
 cd $output_directory
-
-apptainer exec /arcanine/scratch/gent/apps/AlphaPulldown/alpha-analysis_jax_0.4.sif run_get_good_pae.sh --cutoff=10 --output_dir=$output_directory/preds 
+module load AlphaPulldown/2.0.3-foss-2023a-CUDA-12.1.1
+run_get_good_pae.sh --cutoff=10 --output_dir=$output_directory/preds 
 EOT
 
 echo "######################################" >> $instr_file
