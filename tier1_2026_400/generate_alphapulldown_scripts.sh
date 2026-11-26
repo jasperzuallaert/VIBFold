@@ -120,7 +120,7 @@ cat <<EOT > "$gather_results_script"
 #PBS -l mem=16gb
 
 cd $output_directory
-module load AlphaPulldown/2.0.3-foss-2023a-CUDA-12.1.1
+module load AlphaPulldown/2.0.3-foss-2023a
 run_get_good_pae.sh --cutoff=10 --output_dir=$output_directory/preds 
 EOT
 
